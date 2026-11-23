@@ -111,7 +111,7 @@ func TestBackupOnlyUsesTheReadOnlySurface(t *testing.T) {
 	for _, c := range f.Calls {
 		name, _, _ := strings.Cut(c, " ")
 		switch name {
-		case "capabilities", "list", "examine", "list-messages", "fetch-bodies":
+		case "capabilities", "list", "examine", "list-messages", "changed-flags", "uids", "fetch-bodies":
 		default:
 			t.Errorf("unexpected source call %q", c)
 		}
@@ -222,7 +222,10 @@ func TestNoSelectFoldersAreSkipped(t *testing.T) {
 	}
 }
 
-func TestInterruptedFolderLeavesOnlyOrphanBlobs(t *testing.T) {
+// A run that fails mid-folder keeps the bodies it already fetched: they are
+// committed before the error is returned, so nothing is left dangling or
+// orphaned and the next run only fetches what is missing.
+func TestFailedRunKeepsFetchedBodiesAndResumes(t *testing.T) {
 	cfg := initRepo(t)
 	f := fakeMailbox()
 	f.FailAfter = map[string]int{"INBOX": 1}
@@ -233,23 +236,40 @@ func TestInterruptedFolderLeavesOnlyOrphanBlobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !chk.OK() {
-		t.Fatalf("an interrupted run must not leave errors (dangling refs): %+v", chk.Errors)
-	}
-	if kinds(chk.Warnings)["orphan-object"] != 1 {
-		t.Fatalf("want one orphan blob warning, got %+v", chk.Warnings)
+	if !chk.OK() || len(chk.Warnings) != 0 {
+		t.Fatalf("a failed run must leave a consistent repository: %+v %+v", chk.Errors, chk.Warnings)
 	}
 	if got := snapshotsCount(t, cfg); got != 0 {
 		t.Fatalf("%d snapshots after a failed run", got)
 	}
 
 	f.FailAfter = nil
+	f.Reset()
 	rep := runBackup(t, cfg, f)
-	if rep.Messages != 3 || rep.BlobsAdded != 2 || rep.BlobsReused != 1 {
-		t.Fatalf("resumed run %+v (the orphan must be reused, not rewritten)", rep)
+	if rep.Messages != 3 || rep.BlobsAdded != 2 || rep.Fetched != 2 || rep.New != 2 {
+		t.Fatalf("resumed run %+v (the one body fetched before the failure must not be fetched again)", rep)
 	}
 	if chk, _ := Check(context.Background(), cfg, CheckOptions{ReadData: true}); !chk.OK() || len(chk.Warnings) != 0 {
 		t.Fatalf("after recovery: %+v", chk)
+	}
+}
+
+// A blob object whose index row never made it (the process was killed between the
+// two) is an orphan. The next run reuses the file instead of writing it again.
+func TestOrphanFromAKilledRunIsReusedNotRewritten(t *testing.T) {
+	cfg := initRepo(t)
+	f := fakeMailbox()
+	putOrphan(t, cfg, string(f.Folders[0].Messages[0].Raw))
+	chk, _ := Check(context.Background(), cfg, CheckOptions{})
+	if kinds(chk.Warnings)["orphan-object"] != 1 || !chk.OK() {
+		t.Fatalf("setup: %+v", chk)
+	}
+	rep := runBackup(t, cfg, f)
+	if rep.Messages != 3 || rep.BlobsAdded != 2 || rep.BlobsReused != 1 {
+		t.Fatalf("report %+v", rep)
+	}
+	if chk, _ := Check(context.Background(), cfg, CheckOptions{ReadData: true}); !chk.OK() || len(chk.Warnings) != 0 {
+		t.Fatalf("after the run: %+v", chk)
 	}
 }
 
@@ -266,20 +286,21 @@ func snapshotsCount(t *testing.T, cfg *config.Config) int {
 	return len(s)
 }
 
-func TestUIDValidityChangeFailsTheRunWithoutChangingTheFolder(t *testing.T) {
+func TestUIDValidityChangeStartsANewGenerationAndKeepsHistory(t *testing.T) {
 	cfg := initRepo(t)
 	f := fakeMailbox()
 	first := runBackup(t, cfg, f)
-	f.Folders[0].UIDValidity = 99
-	_, err := Backup(context.Background(), cfg, f, BackupOptions{})
-	if err == nil || !strings.Contains(err.Error(), "UIDVALIDITY") {
-		t.Fatalf("err %v", err)
+	f.Folders[0].Recreate()
+	f.Folders[0].Add(msg("7", "After reset unique-subject-7", "body seven"))
+	second := runBackup(t, cfg, f)
+	if second.Status != "complete" || second.Closed != 2 || second.New != 1 {
+		t.Fatalf("second %+v", second)
 	}
-	if n := snapshotsCount(t, cfg); n != 1 {
-		t.Fatalf("%d snapshots", n)
+	if got := snapshotOf(t, cfg, second.Snapshot, "")["INBOX"]; len(got) != 1 {
+		t.Fatalf("new generation: %v", got)
 	}
 	if got := snapshotOf(t, cfg, first.Snapshot, "")["INBOX"]; len(got) != 2 {
-		t.Fatalf("%v", got)
+		t.Fatalf("history lost: %v", got)
 	}
 }
 

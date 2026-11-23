@@ -61,6 +61,11 @@ func ChooseMode(known FolderSync, srv ServerFolder, condstore, force bool) Mode 
 		known.UIDValidity != srv.UIDValidity || known.OpenOther > 0 {
 		return ModeFull
 	}
+	// A server whose mod-sequence or UIDNEXT went backwards was restored from a
+	// backup or is broken: what it says about changes means nothing.
+	if srv.HighestModSeq < known.ModSeq || (srv.UIDNext > 0 && srv.UIDNext-1 < known.LastUID) {
+		return ModeFull
+	}
 	if known.ModSeq == srv.HighestModSeq && srv.UIDNext > 0 && srv.UIDNext-1 == known.LastUID &&
 		int64(srv.NumMessages) == int64(known.OpenCurrent) {
 		return ModeUnchanged

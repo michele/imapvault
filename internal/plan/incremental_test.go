@@ -30,6 +30,8 @@ func TestChooseMode(t *testing.T) {
 		{"expunge plus append, same count and modseq", known, ServerFolder{UIDValidity: 7, UIDNext: 12, NumMessages: 10, HighestModSeq: 50}, true, false, ModeIncremental},
 		{"index has fewer entries than server", FolderSync{UIDValidity: 7, LastUID: 10, ModSeq: 50, OpenCurrent: 8}, srv, true, false, ModeIncremental},
 		{"empty folder, nothing changed", FolderSync{UIDValidity: 7, ModSeq: 5}, ServerFolder{UIDValidity: 7, UIDNext: 1, HighestModSeq: 5}, true, false, ModeUnchanged},
+		{"modseq went backwards", known, ServerFolder{UIDValidity: 7, UIDNext: 11, NumMessages: 10, HighestModSeq: 40}, true, false, ModeFull},
+		{"uidnext went backwards", known, ServerFolder{UIDValidity: 7, UIDNext: 8, NumMessages: 7, HighestModSeq: 60}, true, false, ModeFull},
 		{"server without uidnext", known, ServerFolder{UIDValidity: 7, NumMessages: 10, HighestModSeq: 50}, true, false, ModeIncremental},
 	}
 	for _, tc := range tests {
