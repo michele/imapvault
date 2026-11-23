@@ -158,7 +158,7 @@ func TestPrintBackup(t *testing.T) {
 		Warnings: []string{"run stopped: boom \x1b[31m"},
 	}
 	var b bytes.Buffer
-	printBackup(&b, rep)
+	printBackup(&b, rep, "")
 	got := b.String()
 	for _, want := range []string{"Snapshot 7 (partial): 10 messages in 4 folders", "+2 new, -1 deleted, ~3 flag changes",
 		"2 body(ies) downloaded, 1 skipped (EMAILID); folders: 1 unchanged, 1 incremental, 2 full", "warning: run stopped: boom ?[31m"} {
@@ -171,7 +171,7 @@ func TestPrintBackup(t *testing.T) {
 	}
 	rep.Status = "complete"
 	b.Reset()
-	printBackup(&b, rep)
+	printBackup(&b, rep, "")
 	if strings.Contains(b.String(), "partial") {
 		t.Fatalf("a complete run says partial:\n%s", b.String())
 	}

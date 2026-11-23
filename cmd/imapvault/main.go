@@ -25,10 +25,11 @@ type options struct {
 	stderr     io.Writer // where config warnings go; set from the command
 }
 
-// Exit codes: 0 ok, 1 error, 2 partial backup, 3 guard alert (M4).
+// Exit codes: 0 ok, 1 error, 2 partial backup, 3 guard alert.
 const (
 	exitError   = 1
 	exitPartial = 2
+	exitAlert   = 3
 )
 
 // exitCodeError makes main exit with a specific status after the command has
@@ -71,7 +72,7 @@ func newRootCmd() *cobra.Command {
 		return nil
 	}
 	root.AddCommand(newAccountsCmd(opts), newInitCmd(opts), newCheckCmd(opts), newKeygenCmd(opts),
-		newBackupCmd(opts), newSnapshotsCmd(opts), newLsCmd(opts), newShowCmd(opts), newDiffCmd(opts), newDoctorCmd(opts), newVersionCmd())
+		newBackupCmd(opts), newAlertsCmd(opts), newAckCmd(opts), newPinCmd(opts, true), newPinCmd(opts, false), newSnapshotsCmd(opts), newLsCmd(opts), newShowCmd(opts), newDiffCmd(opts), newDoctorCmd(opts), newVersionCmd())
 	return root
 }
 

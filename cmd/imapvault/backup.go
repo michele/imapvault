@@ -71,7 +71,15 @@ at least one folder was backed up, the snapshot is written and marked partial: i
 what was verified, folders that were not reached keep their previous state, and nothing
 is recorded as deleted. The command exits with code 2; run it again to finish. If
 nothing could be backed up the run fails (exit 1) and no snapshot is written. What was
-downloaded is kept either way, so the next run resumes where this one stopped.`,
+downloaded is kept either way, so the next run resumes where this one stopped.
+
+Before the snapshot is written the run is compared with the previous snapshot. If more
+was deleted than guard.max_deleted_percent or guard.max_deleted_count allow, or a folder
+vanished with mail in it that was not just moved, the guard trips: the new snapshot is
+flagged, the previous one is pinned, an alert is recorded, guard.on_alert runs, and the
+command exits with code 3 (also when the run was partial). Acknowledge it with "ack".
+
+Exit codes: 0 ok, 1 error, 2 partial, 3 guard alert.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadOnlineConfig(opts)
@@ -97,19 +105,55 @@ downloaded is kept either way, so the next run resumes where this one stopped.`,
 					return err
 				}
 			} else {
-				printBackup(out, rep)
+				printBackup(out, rep, opts.account)
 			}
-			if rep.Partial() {
-				return &exitCodeError{code: exitPartial, msg: "the backup is partial: not every folder was read. Run it again to finish."}
-			}
-			return nil
+			return backupExitError(rep)
 		},
 	}
 	cmd.Flags().BoolVar(&full, "full", false, "list every folder in full instead of trusting what the server says changed")
 	return cmd
 }
 
-func printBackup(out io.Writer, rep *engine.BackupReport) {
+// backupExitError turns a finished run into the exit code: 3 when the guard
+// tripped (it wins over partial, because it needs a human), 2 when the run
+// stopped partway, 0 otherwise.
+func backupExitError(rep *engine.BackupReport) error {
+	switch {
+	case rep.Alerted():
+		msg := fmt.Sprintf("ALERT: the mass-deletion guard tripped (alert %d). Look at it with `imapvault alerts`, then `imapvault ack %d`.", rep.Alert.ID, rep.Alert.ID)
+		if rep.Partial() {
+			msg += " The backup is also partial: run it again to finish."
+		}
+		return &exitCodeError{code: exitAlert, msg: msg}
+	case rep.Partial():
+		return &exitCodeError{code: exitPartial, msg: "the backup is partial: not every folder was read. Run it again to finish."}
+	}
+	return nil
+}
+
+// withAccount adds --account to a command hint when the user selected one.
+func withAccount(account, cmd string) string {
+	if account == "" {
+		return "imapvault " + cmd
+	}
+	return "imapvault --account " + account + " " + cmd
+}
+
+func printAlert(out io.Writer, rep *engine.BackupReport, account string) {
+	a := rep.Alert
+	_, _ = fmt.Fprintf(out, "\nALERT %d (%s): %s\n", a.ID, a.Kind, clean(a.Summary))
+	_, _ = fmt.Fprintf(out, "  snapshot %d is flagged", rep.Snapshot)
+	if a.PinnedSnapshot != 0 {
+		_, _ = fmt.Fprintf(out, "; snapshot %d, the last one before it, is pinned and kept", a.PinnedSnapshot)
+		_, _ = fmt.Fprintf(out, "\n  see what changed:  %s", withAccount(account, fmt.Sprintf("diff %d %d", a.PinnedSnapshot, rep.Snapshot)))
+	}
+	_, _ = fmt.Fprintf(out, "\n  acknowledge:       %s\n", withAccount(account, fmt.Sprintf("ack %d", a.ID)))
+	if a.HookError != "" {
+		_, _ = fmt.Fprintf(out, "  guard.on_alert failed: %s\n", clean(a.HookError))
+	}
+}
+
+func printBackup(out io.Writer, rep *engine.BackupReport, account string) {
 	state := ""
 	if rep.Partial() {
 		state = " (partial)"
@@ -131,6 +175,9 @@ func printBackup(out io.Writer, rep *engine.BackupReport) {
 	}
 	for _, w := range rep.Warnings {
 		_, _ = fmt.Fprintf(out, "warning: %s\n", clean(w))
+	}
+	if rep.Alerted() {
+		printAlert(out, rep, account)
 	}
 }
 
