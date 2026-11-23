@@ -1,0 +1,9 @@
+# Any IMAP server. Everything except the three required keys has a default.
+[imap]
+host = "imap.example.com"
+username = "you@example.com"
+# port defaults to 993 (tls = "implicit") or 143 (tls = "starttls")
+# tls = "starttls"
+
+[repository]
+path = "~/imapvault/example"   # must resolve to an absolute path; ~ and $VAR are expanded
