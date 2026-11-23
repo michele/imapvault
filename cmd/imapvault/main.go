@@ -51,7 +51,7 @@ func newRootCmd() *cobra.Command {
 		opts.stderr = cmd.ErrOrStderr()
 		return nil
 	}
-	root.AddCommand(newAccountsCmd(opts), newVersionCmd())
+	root.AddCommand(newAccountsCmd(opts), newInitCmd(opts), newCheckCmd(opts), newVersionCmd())
 	return root
 }
 

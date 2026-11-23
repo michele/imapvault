@@ -45,8 +45,8 @@ func AccountConfigPath(getenv func(string) string, name string) (string, error) 
 }
 
 // PasswordEnvFor names the environment variable holding an account's IMAP
-// password: QUIETBOX_IMAP_PASSWORD_<NAME> (upper-case, '-' as '_'), or the plain
-// QUIETBOX_IMAP_PASSWORD when there is no account.
+// password: IMAPVAULT_IMAP_PASSWORD_<NAME> (upper-case, '-' as '_'), or the plain
+// IMAPVAULT_IMAP_PASSWORD when there is no account.
 func PasswordEnvFor(account string) string {
 	if account == "" {
 		return PasswordEnv
