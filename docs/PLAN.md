@@ -179,9 +179,10 @@ Per folder, in a single read-only session:
 2. `EXAMINE` the folder and compare UIDVALIDITY. If it changed, treat it as a new folder:
    close all entries of the old generation and re-list. Bodies we already have are skipped
    via EMAILID when available, otherwise re-downloaded and deduplicated by hash.
-3. **Fast path** (CONDSTORE + QRESYNC, Fastmail has both): `UID FETCH 1:* (FLAGS) (CHANGEDSINCE modseq VANISHED)`
-   gives flag changes and expunges since last run.
-   **Fallback:** `UID FETCH 1:* (UID FLAGS)` and diff against open entries.
+3. **Fast path** (CONDSTORE; QRESYNC is not used because the IMAP library cannot send it yet): skip the folder when UIDVALIDITY,
+   UIDNEXT, the message count and HIGHESTMODSEQ are unchanged; otherwise list only UIDs above `last_uid`, `UID FETCH 1:last_uid (UID FLAGS)
+   (CHANGEDSINCE modseq)` for flag changes, and find expunges by counting (`UID SEARCH` only when the counts show some).
+   **Fallback:** `UID FETCH 1:* (UID FLAGS)` and diff against open entries, also whenever the fast path's numbers do not add up.
 4. New UIDs (> last_uid): fetch `EMAILID RFC822.SIZE INTERNALDATE FLAGS`. Skip the body when the
    EMAILID maps to a known blob. Otherwise `BODY.PEEK[]` in batches, hash, write blob.
 5. Commit the folder's changes in one transaction, then update the folder's uidvalidity/last_uid/modseq.
@@ -238,11 +239,11 @@ imapvault restore --snapshot latest|<id>|2026-11-20T10:00 \
 |---|---|
 | `keygen --out FILE` | generate an age key pair; print the recipient and a config snippet |
 | `init` | create the repository for an account (encrypted when `encryption.recipients` is set) |
-| `backup` | one backup run → snapshot |
+| `backup [--full]` | one backup run → snapshot. Exit 2 if it stopped partway (snapshot marked partial). `--full` lists every folder in full |
 | `snapshots` | list snapshots (id, time, counts, pinned/flagged) |
 | `ls <snapshot> [folder]` | folders, or messages in a folder (date, from, size, hash). No bodies |
 | `show <hash>` | headers of one message. `--raw` writes the .eml to stdout |
-| `diff <a> <b>` | added / deleted / moved / flag-changed counts per folder |
+| `diff <a> <b>` | added / deleted / moved / re-flagged / renumbered counts per folder; `latest~N` accepted; no private key needed (folders show as `#id` without one) |
 | `pin` / `unpin <snapshot>` | protect a snapshot from retention |
 | `alerts`, `ack <id>` | guard alerts |
 | `forget`, `prune` | retention (`--dry-run`) |
@@ -302,9 +303,38 @@ characters are replaced; `--json` is not altered. `imapsource` has an AST test t
 line endings, two different messages with one Message-ID) confirms the hash is over the exact server bytes. `make itest` needs docker
 or podman (the Makefile falls back to podman).
 
-**M3 Incremental.** New UIDs, flag diff, expunges, folder new/gone/rename, UIDVALIDITY reset,
-CONDSTORE/QRESYNC fast path with fallback, EMAILID download skip, `partial` runs, `diff`.
-*Done when* itests cover each case, including killing the process mid-run and resuming.
+**M3 Incremental (done).** New UIDs, flag diff, expunges, folder new/gone/rename, UIDVALIDITY reset, CONDSTORE fast path
+with fallback, EMAILID download skip, `partial` runs, `diff`. *Done when* itests cover each case, including killing the
+process mid-run and resuming.
+*Findings:* **go-imap v2.0.0-beta.9 (the newest release) has CONDSTORE but no QRESYNC/VANISHED and cannot request EMAILID**,
+so the fast path is CONDSTORE-only. Per folder `plan.ChooseMode` picks `unchanged` (UIDVALIDITY, UIDNEXT-1 = last_uid, message
+count = open entries and HIGHESTMODSEQ all match: one EXAMINE), `incremental` (list `last_uid+1:*`, `FETCH 1:last_uid CHANGEDSINCE
+<stored modseq>` for flags, and expunges found by *counting*: the UID list is fetched only when
+`open + new - NumMessages > 0`) or `full` (the M2 rescan, still the authority). Unchanged also needs the count and UIDNEXT because
+plain CONDSTORE does not promise to bump HIGHESTMODSEQ on EXPUNGE. A server whose modseq or UIDNEXT goes backwards, a
+stored modseq of 0, a UIDVALIDITY change or leftover entries of another generation all force `full`. If the incremental
+pieces disagree (`plan.ErrInconsistent`: a changed UID with no open entry, counts that cannot be explained, a UID list that
+does not match) the folder is rescanned in full in the same run before anything is committed. `SplitGenerations` closes every
+open entry of another UIDVALIDITY, which also finishes a reset a killed run left half done. The EMAILID skip is engine code
+(`plan.MatchEmailID`: id *and* size must match, it is a hint, never the key) covered by unit tests with the fake; `imapsource`
+leaves `EmailID` empty and dovecot has no OBJECTID, so the itests only exercise the fallback (a moved message is fetched again
+and its blob reused). Rename needs no special code (old folder gone, new folder new, blobs dedupe); on a server without
+OBJECTID its bodies are downloaded again. Fetched bodies commit in batches (`ApplyBatch`, every 100 bodies or 64 MiB) without
+moving the folder's last_uid and modseq, which advance only in `ApplyFolder` at the end; a failed fetch commits what it already
+holds. A run that stops after at least one folder committed is `partial`: its snapshot holds what the index has at that moment
+(a folder interrupted mid-download shows the batches already committed), unreached folders keep their entries open, **no folder
+is closed as gone**, and the command exits 2. A run that committed nothing, or a server refusing every folder, fails with no
+snapshot. A folder that vanishes between LIST and EXAMINE (`mail.ErrFolderGone`, a server NO) is skipped and the run is partial.
+`diff` (plaintext columns only, so it works on a backup machine) classifies the entries between two snapshots as added, deleted,
+moved (a blob left one folder and arrived in another, paired in folder-id order), re-flagged and renumbered; folder names show
+with a key and as `#<id>` without; `latest~N` is accepted wherever a snapshot is. **Footprint on the server:** dovecot reports
+HIGHESTMODSEQ 0 until some client enables CONDSTORE; the backup's `EXAMINE (CONDSTORE)` makes it start tracking mod-sequences
+for that mailbox (no message or flag changes). The M2 read-only itest now takes its HIGHESTMODSEQ baseline with CONDSTORE already
+on; `imapsource`'s AST test now also fails on any `SelectOptions` without `ReadOnly: true`. `make itest` runs packages one at a
+time (`-p 1`) because `TestBackupMatchesServer` backs up every folder on the shared server. The UIDVALIDITY itest sleeps 1.1 s
+because dovecot derives UIDVALIDITY from the folder's creation second. A randomised engine test (server mutations including
+resets, renames, removals and injected failures; with and without CONDSTORE) checks after every completed run that the snapshot
+equals the server; 80 seeds passed during development, the default is 4.
 
 **M4 Guard.** Thresholds, flagged snapshots, auto-pin, alerts/ack, `on_alert`, exit codes, `pin`/`unpin`.
 *Done when* an itest that deletes everything and expunges Trash produces an alert, exit 3 and a pinned previous snapshot.
