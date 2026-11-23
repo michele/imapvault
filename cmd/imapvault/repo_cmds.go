@@ -109,7 +109,11 @@ is running it fails immediately.`,
 
 func printCheck(out io.Writer, rep *engine.CheckReport, readData bool) {
 	_, _ = fmt.Fprintf(out, "Repository: %s\n", rep.Repository)
-	_, _ = fmt.Fprintf(out, "Format v%d, index schema v%d\n", rep.FormatVersion, rep.SchemaVersion)
+	schema := "unknown"
+	if rep.SchemaVersion > 0 {
+		schema = fmt.Sprintf("v%d", rep.SchemaVersion)
+	}
+	_, _ = fmt.Fprintf(out, "Format v%d, index schema %s\n", rep.FormatVersion, schema)
 	_, _ = fmt.Fprintf(out, "Blobs in index: %d, objects on disk: %d", rep.Blobs, rep.Objects)
 	if readData {
 		_, _ = fmt.Fprintf(out, ", read and verified: %d", rep.ObjectsVerified)

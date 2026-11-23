@@ -197,9 +197,16 @@ no-OBJECTID fallback. Hierarchy delimiter on the test server is `/`. Config deci
 default) and must resolve to an absolute path; `folders.include`/`exclude` globs use `*` across the hierarchy delimiter;
 a `0` in `guard.max_deleted_*` turns that threshold off.
 
-**M1 Repository.** `init`, `repo.toml`, lock, blob store (envelope, zstd, sha256, atomic write + fsync),
+**M1 Repository (done).** `init`, `repo.toml`, lock, blob store (envelope, zstd, sha256, atomic write + fsync),
 SQLite schema + migrations, `check`. *Done when* blob store has property tests (put/get round trip,
 corruption detected) and `init` + `check` work against a temp dir.
+*Findings:* `format_version` (layout + blob envelope) and the index schema version (`PRAGMA user_version`, embedded
+`migrations/NNNN_*.sql`) are separate numbers. Both are 1 until v0.1.0; after the first release any index migration
+also bumps `format_version` (safety rule 7). `Open` refuses a newer index and a read-only open refuses an unmigrated one.
+`runs.status` gained `running` (a run in progress), and `snapshots` gained `forgotten` for `forget`. Flock-based lock
+(unix only), non-blocking: `check` takes it shared and fails at once while a writer runs. `check` reports orphan blobs,
+leftovers in `tmp/` and stray files as warnings (a crash may leave them); missing or corrupt data, a damaged index
+and dangling references are errors (exit 1). It only re-reads blobs with `--read-data`. `init` needs no password.
 
 **M2 First full backup.** `mail.Source` + imapsource (EXAMINE, BODY.PEEK, batching), engine writes
 entries + snapshot, `snapshots`, `ls`, `show`, `doctor`. *Done when* a seeded dovecot mailbox backs up
