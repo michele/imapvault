@@ -59,9 +59,10 @@ func DiffFolders(known []KnownFolder, listed []ListedFolder) FolderPlan {
 
 // OpenEntry is an entry still valid in the index.
 type OpenEntry struct {
-	EntryID int64
-	UID     uint32
-	Flags   string // normalised
+	EntryID     int64
+	UID         uint32
+	UIDValidity uint32 // generation; only SplitGenerations reads it
+	Flags       string // normalised
 }
 
 // ServerMsg is a message the server lists.
