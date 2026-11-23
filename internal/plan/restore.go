@@ -29,6 +29,7 @@ type RestoreTarget struct {
 // RestoreMessage is one message the user asked to restore.
 type RestoreMessage struct {
 	Folder       string // original folder name on the source server
+	UID          uint32 // original UID: only orders messages, so UIDs on the target ascend with the original's
 	SrcDelim     string // that server's hierarchy delimiter
 	Blob         [32]byte
 	Size         int64
@@ -234,12 +235,18 @@ func matchOne(present []PresentMessage, used []bool, m RestoreMessage) bool {
 	return false
 }
 
+// lessMessage orders messages the way they arrived: internal date, then original
+// UID, then (to make the order total) blob and flags. Appending in this order
+// gives the restored folder ascending UIDs that follow the original's.
 func lessMessage(a, b RestoreMessage) bool {
-	if c := strings.Compare(string(a.Blob[:]), string(b.Blob[:])); c != 0 {
-		return c < 0
-	}
 	if !a.InternalDate.Equal(b.InternalDate) {
 		return a.InternalDate.Before(b.InternalDate)
+	}
+	if a.UID != b.UID {
+		return a.UID < b.UID
+	}
+	if c := strings.Compare(string(a.Blob[:]), string(b.Blob[:])); c != 0 {
+		return c < 0
 	}
 	return NormalizeFlags(a.Flags) < NormalizeFlags(b.Flags)
 }

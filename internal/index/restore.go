@@ -62,3 +62,13 @@ func (db *DB) DeletedSince(cutoff time.Time) ([]DeletedEntry, error) {
 	}
 	return out, rows.Err()
 }
+
+// AllFolders returns every folder row, live or gone, by id. Restore needs the
+// gone ones: a folder deleted from the server is still where its messages were.
+func (db *DB) AllFolders() ([]Folder, error) {
+	rows, err := db.Query(`SELECT ` + folderCols + ` FROM folders ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	return scanFolders(rows)
+}

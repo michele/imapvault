@@ -367,3 +367,25 @@ func upper(s string) string {
 	}
 	return string(b)
 }
+
+// Messages are appended in the order they arrived, so the restored folder's UIDs
+// ascend with the original's whatever order the blobs hash in.
+func TestRestoreAppendsInOriginalOrder(t *testing.T) {
+	mk := func(b byte, uid uint32, minute int) RestoreMessage {
+		m := msg("INBOX", b, 10, "<x>")
+		m.UID, m.InternalDate = uid, t0.Add(time.Duration(minute)*time.Minute)
+		return m
+	}
+	// blob bytes are in the opposite order to arrival; two share a date.
+	p, err := Restore(baseInput(mk(9, 3, 2), mk(1, 2, 1), mk(5, 1, 1), mk(2, 4, 0)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []byte
+	for _, it := range p.Folders[0].Append {
+		got = append(got, it.Blob[0])
+	}
+	if want := []byte{2, 5, 1, 9}; string(got) != string(want) {
+		t.Fatalf("append order (blob bytes) = %v, want %v (date, then UID)", got, want)
+	}
+}

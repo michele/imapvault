@@ -125,9 +125,12 @@ func (rd *reader) snapshotID(spec string) (int64, error) {
 		}
 		return snaps[len(snaps)-1-n].ID, nil
 	}
+	if at, ok := parseSnapshotTime(spec); ok {
+		return rd.snapshotAt(spec, at)
+	}
 	id, err := strconv.ParseInt(spec, 10, 64)
 	if err != nil || id < 1 {
-		return 0, fmt.Errorf("snapshot %q: expected \"latest\", \"latest~N\" or a snapshot number", spec)
+		return 0, fmt.Errorf("snapshot %q: expected \"latest\", \"latest~N\", a snapshot number or a time such as 2026-11-20T10:00", spec)
 	}
 	ok, err := rd.db.HasSnapshot(id)
 	if err != nil {
@@ -335,4 +338,40 @@ func Show(ctx context.Context, cfg *config.Config, prefix string, raw bool) (*Sh
 		}
 	}
 	return res, nil
+}
+
+// snapshotTimeLayouts are the time forms a snapshot spec accepts. Forms without a
+// zone are read in the local time zone, like the times `snapshots` prints.
+var snapshotTimeLayouts = []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02T15:04", "2006-01-02"}
+
+// parseSnapshotTime reads a time spec. A plain snapshot number never parses as one.
+func parseSnapshotTime(spec string) (time.Time, bool) {
+	for _, layout := range snapshotTimeLayouts {
+		if t, err := time.ParseInLocation(layout, spec, time.Local); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// snapshotAt resolves a time to the newest snapshot (not forgotten) created at or
+// before it. A date alone means the end of that day.
+func (rd *reader) snapshotAt(spec string, at time.Time) (int64, error) {
+	if len(spec) == len("2006-01-02") {
+		at = at.AddDate(0, 0, 1).Add(-time.Nanosecond)
+	}
+	all, err := rd.db.Snapshots()
+	if err != nil {
+		return 0, err
+	}
+	var best int64
+	for _, s := range all {
+		if !s.Forgotten && !s.CreatedAt.After(at) && s.ID > best {
+			best = s.ID
+		}
+	}
+	if best == 0 {
+		return 0, fmt.Errorf("snapshot %q: no snapshot was taken at or before that time", spec)
+	}
+	return best, nil
 }
