@@ -64,6 +64,8 @@ type BackupReport struct {
 	BlobsReused      int            `json:"blobs_reused"`       // new entries that needed no new blob
 	BytesRaw         int64          `json:"bytes_raw"`          // of the blobs added
 	Warnings         []string       `json:"warnings,omitempty"`
+	Flagged          bool           `json:"flagged"` // the guard tripped: the snapshot is flagged
+	Alert            *AlertReport   `json:"alert,omitempty"`
 }
 
 // Partial reports whether the run stopped before every folder was verified.
@@ -72,6 +74,9 @@ func (r *BackupReport) Partial() bool { return r.Status == index.RunPartial }
 // errFolderSkipped marks a folder the server refused to open (it vanished
 // between LIST and EXAMINE): the run goes on and ends partial.
 var errFolderSkipped = errors.New("folder skipped")
+
+// Alerted reports whether the mass-deletion guard tripped.
+func (r *BackupReport) Alerted() bool { return r.Alert != nil }
 
 // Backup runs one read-only backup of src into the repository and writes a
 // snapshot. It never resolves or uses a private key (safety rule 8): everything
@@ -92,6 +97,10 @@ func Backup(ctx context.Context, cfg *config.Config, src mail.Source, opts Backu
 	}
 	if opts.Logf == nil {
 		opts.Logf = func(string, ...any) {}
+	}
+	// A broken on_alert is found now, not after a mass deletion.
+	if _, err := parseHook(cfg.Guard.OnAlert); err != nil {
+		return nil, err
 	}
 	acct := accountOf(cfg)
 	r, err := repo.Open(cfg.Repository.Path, &acct)
@@ -136,7 +145,7 @@ func Backup(ctx context.Context, cfg *config.Config, src mail.Source, opts Backu
 		return nil, err
 	}
 	b := &backup{cfg: cfg, src: src, opts: opts, db: db, store: store, sealer: sealer, folderKey: folderKey, run: run,
-		condstore: caps.Has("CONDSTORE"), rep: &BackupReport{}}
+		condstore: caps.Has("CONDSTORE"), rep: &BackupReport{}, folderNames: map[int64]string{}}
 	if err := b.execute(ctx); err != nil {
 		_ = db.FinishRun(run, index.RunFailed, opts.Now())
 		return nil, err
@@ -145,12 +154,29 @@ func Backup(ctx context.Context, cfg *config.Config, src mail.Source, opts Backu
 	if b.partial {
 		status = index.RunPartial
 	}
-	if err := db.CompleteRun(run, status, opts.Now(), nil); err != nil {
+	// The guard runs before the snapshot is written so that the flag, the pin on
+	// the last good snapshot and the alert commit together with it.
+	alert, summary, err := b.guard()
+	if err != nil {
+		_ = db.FinishRun(run, index.RunFailed, opts.Now())
+		return nil, err
+	}
+	if err := db.CompleteRun(run, status, opts.Now(), alert); err != nil {
 		_ = db.FinishRun(run, index.RunFailed, opts.Now())
 		return nil, err
 	}
 	b.rep.Snapshot = run
 	b.rep.Status = status
+	if alert != nil {
+		id, err := db.LastAlertID(run)
+		if err != nil {
+			return nil, err
+		}
+		b.rep.Flagged = true
+		b.rep.Alert = &AlertReport{ID: id, Kind: alert.Kind, Summary: summary, PinnedSnapshot: alert.PinSnapshot}
+		b.opts.Logf("guard tripped: alert %d (%s); snapshot %d flagged, snapshot %d pinned", id, alert.Kind, run, alert.PinSnapshot)
+		b.notify(ctx, b.rep.Alert)
+	}
 	snaps, err := db.Snapshots()
 	if err == nil && len(snaps) > 0 {
 		b.rep.Messages = snaps[len(snaps)-1].Messages
@@ -169,6 +195,8 @@ type backup struct {
 	run       int64
 	condstore bool
 	rep       *BackupReport
+
+	folderNames map[int64]string // folder id -> name, for the folders read in this run
 
 	committed int  // folders verified and committed (or found unchanged) this run
 	partial   bool // the run did not verify every folder
@@ -304,6 +332,7 @@ func (b *backup) backupFolder(ctx context.Context, t target) error {
 			return err
 		}
 	}
+	b.folderNames[folderID] = name
 	po, blobOf := toPlanEntries(open)
 	// Entries of any other UIDVALIDITY generation close: their UIDs mean nothing
 	// now. The same rule resumes a reset that a killed run left half done.

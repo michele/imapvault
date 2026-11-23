@@ -67,7 +67,7 @@ func openReaderMode(ctx context.Context, cfg *config.Config, mode keyMode) (*rea
 		warnings, err := cfg.ResolveIdentity(ctx) // may run identity_command: before the lock
 		switch {
 		case err != nil && mode == keyIfAvailable && errors.Is(err, config.ErrNoIdentity):
-			rd.warnings = append(rd.warnings, "no private key is configured: folders are shown by number, not name")
+			rd.warnings = append(rd.warnings, "no private key is configured: sealed values (folder names, alert summaries) are not shown")
 		case err != nil:
 			return nil, err
 		default:
