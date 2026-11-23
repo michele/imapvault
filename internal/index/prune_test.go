@@ -391,3 +391,13 @@ func TestApplyPruneDryRunStillRefusesAWrongPlan(t *testing.T) {
 		t.Fatal("a dry run must report a plan that would drop a referenced blob")
 	}
 }
+
+func TestBlobSize(t *testing.T) {
+	f := newHistory(t)
+	if n, err := f.db.BlobSize(f.shared.SHA); err != nil || n != int64(len("shared")) {
+		t.Errorf("size = %d (err %v), want %d", n, err, len("shared"))
+	}
+	if _, err := f.db.BlobSize(blob("nope").SHA); err == nil {
+		t.Error("the size of an unknown blob must be an error")
+	}
+}

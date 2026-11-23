@@ -199,3 +199,13 @@ func (db *DB) VacuumInto(path string) error {
 	_, err := db.Exec(`VACUUM INTO ?`, path)
 	return err
 }
+
+// BlobSize is the size of the original message of a blob, as recorded when it
+// was stored. An unknown blob is an error.
+func (db *DB) BlobSize(sha [32]byte) (int64, error) {
+	var n int64
+	if err := db.QueryRow(`SELECT size FROM blobs WHERE sha256 = ?`, sha[:]).Scan(&n); err != nil {
+		return 0, fmt.Errorf("blob %x: %w", sha[:6], err)
+	}
+	return n, nil
+}
