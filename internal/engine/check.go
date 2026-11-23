@@ -179,7 +179,7 @@ func checkIndex(ctx context.Context, r *repo.Repo, rep *CheckReport) (keys map[o
 }
 
 func checkObjects(ctx context.Context, r *repo.Repo, rep *CheckReport, indexed map[objects.Key]struct{}, haveIndex bool, opts CheckOptions) error {
-	st, err := objects.Open(r.ObjectsDir(), r.TmpDir())
+	st, err := objects.Open(r.ObjectsDir(), r.TmpDir(), objects.Options{})
 	if err != nil {
 		return err
 	}

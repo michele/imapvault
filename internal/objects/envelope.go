@@ -3,14 +3,16 @@ package objects
 import (
 	"errors"
 	"fmt"
+
+	"github.com/michele/imapvault/internal/seal"
 )
 
 // Envelope flag bits (byte 0 of every object file).
 const (
 	flagZstd      byte = 1 << 0
-	flagEncrypted byte = 1 << 1 // reserved: v1 never writes it and refuses to read it
+	flagEncrypted byte = 1 << 1 // payload is age(zstd(raw)); compression comes before encryption
 
-	knownFlags = flagZstd
+	knownFlags = flagZstd | flagEncrypted
 )
 
 var (
@@ -21,6 +23,8 @@ var (
 	// ErrUnsupported means the envelope uses bits this version does not understand
 	// (for example encryption written by a newer imapvault).
 	ErrUnsupported = errors.New("object uses an unsupported envelope")
+	// ErrNeedIdentity means the object is encrypted and the store has no private key.
+	ErrNeedIdentity = seal.ErrNeedIdentity
 )
 
 // checkFlags rejects any envelope bit this version cannot interpret.
@@ -29,7 +33,7 @@ func checkFlags(flags byte) error {
 		return fmt.Errorf("%w: flags %#02x", ErrUnsupported, flags)
 	}
 	if flags&flagZstd == 0 {
-		// v1 always compresses; an uncompressed object is not something we wrote.
+		// we always compress; an uncompressed object is not something we wrote.
 		return fmt.Errorf("%w: flags %#02x (no compression bit)", ErrUnsupported, flags)
 	}
 	return nil

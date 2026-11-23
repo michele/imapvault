@@ -39,12 +39,12 @@ func addBlob(t *testing.T, cfg *config.Config, raw string) objects.Key {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := objects.Open(r.ObjectsDir(), r.TmpDir())
+	st, err := objects.Open(r.ObjectsDir(), r.TmpDir(), objects.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = st.Close() }()
-	k, _, err := st.Put([]byte(raw))
+	k, _, _, err := st.Put([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,8 +185,8 @@ func TestCheckOrphanAndTmpAndJunkAreWarnings(t *testing.T) {
 	addBlob(t, cfg, "indexed")
 	// an orphan: stored but never indexed (crash between blob write and index commit).
 	r, _ := repo.Open(cfg.Repository.Path, nil)
-	st, _ := objects.Open(r.ObjectsDir(), r.TmpDir())
-	if _, _, err := st.Put([]byte("orphan")); err != nil {
+	st, _ := objects.Open(r.ObjectsDir(), r.TmpDir(), objects.Options{})
+	if _, _, _, err := st.Put([]byte("orphan")); err != nil {
 		t.Fatal(err)
 	}
 	_ = st.Close()
@@ -297,9 +297,9 @@ func TestCheckRespectsLock(t *testing.T) {
 func TestCheckFindingsAreCapped(t *testing.T) {
 	cfg := initRepo(t)
 	r, _ := repo.Open(cfg.Repository.Path, nil)
-	st, _ := objects.Open(r.ObjectsDir(), r.TmpDir())
+	st, _ := objects.Open(r.ObjectsDir(), r.TmpDir(), objects.Options{})
 	for i := 0; i < maxFindingsPerKind+15; i++ {
-		_, _, _ = st.Put([]byte{byte(i), byte(i >> 8), 'o'})
+		_, _, _, _ = st.Put([]byte{byte(i), byte(i >> 8), 'o'})
 	}
 	_ = st.Close()
 	rep, err := Check(context.Background(), cfg, CheckOptions{})

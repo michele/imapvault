@@ -14,7 +14,7 @@ import (
 func newStore(t *testing.T) (*Store, string) {
 	t.Helper()
 	root := t.TempDir()
-	s, err := Open(filepath.Join(root, "objects"), filepath.Join(root, "tmp"))
+	s, err := Open(filepath.Join(root, "objects"), filepath.Join(root, "tmp"), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func newStore(t *testing.T) (*Store, string) {
 func TestPutGetRoundTrip(t *testing.T) {
 	s, _ := newStore(t)
 	raw := []byte("From: a@example.com\r\nSubject: x\r\n\r\nbody\r\n")
-	key, added, err := s.Put(raw)
+	key, _, added, err := s.Put(raw)
 	if err != nil || !added {
 		t.Fatalf("put: added=%v err=%v", added, err)
 	}
@@ -44,8 +44,8 @@ func TestPutGetRoundTrip(t *testing.T) {
 func TestPutDedupes(t *testing.T) {
 	s, _ := newStore(t)
 	raw := []byte("same")
-	k1, a1, _ := s.Put(raw)
-	k2, a2, err := s.Put(raw)
+	k1, _, a1, _ := s.Put(raw)
+	k2, _, a2, err := s.Put(raw)
 	if err != nil || k1 != k2 || !a1 || a2 {
 		t.Fatalf("dedupe: %v %v %v %v", k1 == k2, a1, a2, err)
 	}
@@ -54,7 +54,7 @@ func TestPutDedupes(t *testing.T) {
 func TestEmptyAndBinaryPayloads(t *testing.T) {
 	s, _ := newStore(t)
 	for _, raw := range [][]byte{{}, {0}, bytes.Repeat([]byte{0xff}, 1<<20)} {
-		k, _, err := s.Put(raw)
+		k, _, _, err := s.Put(raw)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -68,7 +68,7 @@ func TestEmptyAndBinaryPayloads(t *testing.T) {
 func TestRoundTripProperty(t *testing.T) {
 	s, _ := newStore(t)
 	f := func(raw []byte) bool {
-		k, _, err := s.Put(raw)
+		k, _, _, err := s.Put(raw)
 		if err != nil {
 			return false
 		}
@@ -95,7 +95,7 @@ func TestCorruptionDetected(t *testing.T) {
 	raw := bytes.Repeat([]byte("corrupt me "), 500)
 	// every single-byte flip of the stored file must be caught.
 	s, _ := newStore(t)
-	k, _, _ := s.Put(raw)
+	k, _, _, _ := s.Put(raw)
 	path := s.path(k)
 	orig, err := os.ReadFile(path)
 	if err != nil {
@@ -127,7 +127,7 @@ func TestCorruptionDetected(t *testing.T) {
 
 func TestTruncationDetected(t *testing.T) {
 	s, _ := newStore(t)
-	k, _, _ := s.Put(bytes.Repeat([]byte("trunc "), 1000))
+	k, _, _, _ := s.Put(bytes.Repeat([]byte("trunc "), 1000))
 	orig, _ := os.ReadFile(s.path(k))
 	for _, n := range []int{0, 1, len(orig) / 2, len(orig) - 1} {
 		if err := os.WriteFile(s.path(k), orig[:n], 0o600); err != nil {
@@ -141,9 +141,9 @@ func TestTruncationDetected(t *testing.T) {
 
 func TestUnknownEnvelopeBitsRejected(t *testing.T) {
 	s, _ := newStore(t)
-	k, _, _ := s.Put([]byte("hello"))
+	k, _, _, _ := s.Put([]byte("hello"))
 	orig, _ := os.ReadFile(s.path(k))
-	for _, flags := range []byte{0x00, 0x02, 0x03, 0x04, 0x81, 0xff} {
+	for _, flags := range []byte{0x00, 0x02, 0x04, 0x05, 0x81, 0xff} {
 		b := append([]byte(nil), orig...)
 		b[0] = flags
 		_ = os.WriteFile(s.path(k), b, 0o600)
@@ -155,7 +155,7 @@ func TestUnknownEnvelopeBitsRejected(t *testing.T) {
 
 func TestVerifyOK(t *testing.T) {
 	s, _ := newStore(t)
-	k, _, _ := s.Put([]byte("fine"))
+	k, _, _, _ := s.Put([]byte("fine"))
 	if err := s.Verify(k); err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestWalk(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		b := make([]byte, 32)
 		_, _ = rand.Read(b)
-		k, _, _ := s.Put(b)
+		k, _, _, _ := s.Put(b)
 		want[k] = true
 	}
 	// junk that is not an object must be skipped, not fail the walk.
@@ -195,7 +195,7 @@ func TestLeftoverTmpDoesNotBreakPut(t *testing.T) {
 	s, root := newStore(t)
 	// a crash mid-write leaves a partial file in tmp/ and nothing in objects/.
 	_ = os.WriteFile(filepath.Join(root, "tmp", "partial"), []byte{1, 2, 3}, 0o600)
-	k, _, err := s.Put([]byte("after crash"))
+	k, _, _, err := s.Put([]byte("after crash"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestLeftoverTmpDoesNotBreakPut(t *testing.T) {
 func TestPutLeavesNoTmpFiles(t *testing.T) {
 	s, root := newStore(t)
 	for i := 0; i < 5; i++ {
-		_, _, _ = s.Put([]byte{byte(i)})
+		_, _, _, _ = s.Put([]byte{byte(i)})
 	}
 	ents, _ := os.ReadDir(filepath.Join(root, "tmp"))
 	if len(ents) != 0 {
@@ -217,7 +217,7 @@ func TestPutLeavesNoTmpFiles(t *testing.T) {
 
 func TestLayoutAndModes(t *testing.T) {
 	s, _ := newStore(t)
-	k, _, _ := s.Put([]byte("layout"))
+	k, _, _, _ := s.Put([]byte("layout"))
 	hex := k.String()
 	want := filepath.Join(s.root, hex[:2], hex[2:])
 	if s.path(k) != want {
@@ -251,7 +251,7 @@ func FuzzGetNeverPanics(f *testing.F) {
 	f.Add([]byte{0xff, 0, 0})
 	f.Fuzz(func(t *testing.T, data []byte) {
 		root := t.TempDir()
-		s, err := Open(filepath.Join(root, "objects"), filepath.Join(root, "tmp"))
+		s, err := Open(filepath.Join(root, "objects"), filepath.Join(root, "tmp"), Options{})
 		if err != nil {
 			t.Fatal(err)
 		}
