@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,6 +24,21 @@ type options struct {
 	json       bool
 	stderr     io.Writer // where config warnings go; set from the command
 }
+
+// Exit codes: 0 ok, 1 error, 2 partial backup, 3 guard alert (M4).
+const (
+	exitError   = 1
+	exitPartial = 2
+)
+
+// exitCodeError makes main exit with a specific status after the command has
+// already printed its own output. The message goes to stderr as is.
+type exitCodeError struct {
+	code int
+	msg  string
+}
+
+func (e *exitCodeError) Error() string { return e.msg }
 
 func defaultConfigPath() string {
 	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
@@ -55,17 +71,23 @@ func newRootCmd() *cobra.Command {
 		return nil
 	}
 	root.AddCommand(newAccountsCmd(opts), newInitCmd(opts), newCheckCmd(opts), newKeygenCmd(opts),
-		newBackupCmd(opts), newSnapshotsCmd(opts), newLsCmd(opts), newShowCmd(opts), newDoctorCmd(opts), newVersionCmd())
+		newBackupCmd(opts), newSnapshotsCmd(opts), newLsCmd(opts), newShowCmd(opts), newDiffCmd(opts), newDoctorCmd(opts), newVersionCmd())
 	return root
 }
 
 func main() {
-	// Ctrl-C and SIGTERM cancel the context, so a running backup ends as a failed
-	// run (no snapshot) instead of being killed mid-folder.
+	// Ctrl-C and SIGTERM cancel the context, so a running backup stops cleanly: it
+	// keeps what it already committed and, if at least one folder was done, ends
+	// as a partial run (exit 2) instead of being killed mid-folder.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := newRootCmd().ExecuteContext(ctx); err != nil {
+		var ec *exitCodeError
+		if errors.As(err, &ec) {
+			fmt.Fprintln(os.Stderr, ec.msg)
+			os.Exit(ec.code)
+		}
 		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		os.Exit(exitError)
 	}
 }

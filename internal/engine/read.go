@@ -25,6 +25,7 @@ type reader struct {
 	db       *index.DB
 	opener   *seal.Opener
 	identity string // identity text, "" for a plain repository
+	names    bool   // sealed values can be opened (plain repository, or the key was resolved)
 	warnings []string
 	unlock   func()
 }
@@ -34,30 +35,51 @@ func (rd *reader) close() {
 	rd.unlock()
 }
 
+// keyMode says what a command needs of the private key.
+type keyMode int
+
+const (
+	keyNone        keyMode = iota // reads no sealed value: never resolves an identity
+	keyRequired                   // reads sealed values: the key must resolve and match
+	keyIfAvailable                // reads sealed values if it can: with no key configured, falls back to plaintext columns
+)
+
 // openReader opens the repository for reading. needKey says whether the command
 // reads sealed values: if so and the repository is encrypted, the private key is
 // resolved and proven against the canary first, so a wrong key is reported as
 // such and not as corruption. A command that reads no sealed value (snapshots)
 // never resolves an identity.
 func openReader(ctx context.Context, cfg *config.Config, needKey bool) (*reader, error) {
+	if needKey {
+		return openReaderMode(ctx, cfg, keyRequired)
+	}
+	return openReaderMode(ctx, cfg, keyNone)
+}
+
+func openReaderMode(ctx context.Context, cfg *config.Config, mode keyMode) (*reader, error) {
 	acct := accountOf(cfg)
 	r, err := repo.Open(cfg.Repository.Path, &acct)
 	if err != nil {
 		return nil, err
 	}
-	rd := &reader{r: r, opener: seal.NewOpener(nil)}
-	if needKey && r.Meta.Encryption.Enabled {
+	rd := &reader{r: r, opener: seal.NewOpener(nil), names: !r.Meta.Encryption.Enabled}
+	if mode != keyNone && r.Meta.Encryption.Enabled {
 		warnings, err := cfg.ResolveIdentity(ctx) // may run identity_command: before the lock
-		if err != nil {
+		switch {
+		case err != nil && mode == keyIfAvailable && errors.Is(err, config.ErrNoIdentity):
+			rd.warnings = append(rd.warnings, "no private key is configured: folders are shown by number, not name")
+		case err != nil:
 			return nil, err
-		}
-		rd.warnings = warnings
-		rd.identity = cfg.Encryption.Identity
-		if rd.opener, err = openerOf(rd.identity); err != nil {
-			return nil, err
-		}
-		if err := checkCanary(r, rd.opener); err != nil {
-			return nil, err
+		default:
+			rd.warnings = warnings
+			rd.identity = cfg.Encryption.Identity
+			if rd.opener, err = openerOf(rd.identity); err != nil {
+				return nil, err
+			}
+			if err := checkCanary(r, rd.opener); err != nil {
+				return nil, err
+			}
+			rd.names = true
 		}
 	}
 	if rd.unlock, err = r.Lock(repo.Shared); err != nil {
@@ -82,9 +104,23 @@ func (rd *reader) snapshotID(spec string) (int64, error) {
 		}
 		return id, nil
 	}
+	if rest, ok := strings.CutPrefix(spec, "latest~"); ok {
+		n, err := strconv.Atoi(rest)
+		if err != nil || n < 0 {
+			return 0, fmt.Errorf("snapshot %q: expected latest~N with N a number (latest~1 is the one before the latest)", spec)
+		}
+		snaps, err := rd.db.Snapshots()
+		if err != nil {
+			return 0, err
+		}
+		if n >= len(snaps) {
+			return 0, fmt.Errorf("snapshot %q does not exist: the repository has %d snapshot(s)", spec, len(snaps))
+		}
+		return snaps[len(snaps)-1-n].ID, nil
+	}
 	id, err := strconv.ParseInt(spec, 10, 64)
 	if err != nil || id < 1 {
-		return 0, fmt.Errorf("snapshot %q: expected \"latest\" or a snapshot number", spec)
+		return 0, fmt.Errorf("snapshot %q: expected \"latest\", \"latest~N\" or a snapshot number", spec)
 	}
 	ok, err := rd.db.HasSnapshot(id)
 	if err != nil {

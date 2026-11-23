@@ -49,20 +49,29 @@ func clean(s string) string {
 }
 
 func newBackupCmd(opts *options) *cobra.Command {
-	return &cobra.Command{
+	var full bool
+	cmd := &cobra.Command{
 		Use:   "backup",
 		Short: "Back up the mailbox into a new snapshot",
 		Long: `Reads the mailbox and writes a new snapshot to the repository. It is read-only on
 the server: folders are opened with EXAMINE and messages fetched with BODY.PEEK[], so
 no flag changes and nothing is ever deleted or moved there.
 
-Every run lists each selected folder in full and compares it with the repository, so
-new mail, deleted mail and flag changes are all recorded. Messages that are already
-stored are not downloaded again. An encrypted repository needs only the public keys
-from the config: backup never reads your private key.
+After the first run only what changed is read. A folder the server reports as
+unchanged costs one EXAMINE. With CONDSTORE (most servers) new mail, flag changes and
+deletions are found without listing the folder; without it, or whenever the pieces do
+not add up, the folder is listed in full and compared with the repository. --full
+forces that full comparison everywhere. Messages that are already stored are not
+downloaded again, even when they moved to another folder or UIDVALIDITY changed. An
+encrypted repository needs only the public keys from the config: backup never reads
+your private key.
 
-If the run fails, folders already finished stay in the repository but no snapshot is
-written; the next run carries on and reuses what was stored.`,
+If the run stops partway (a folder cannot be read, the connection drops, Ctrl-C) after
+at least one folder was backed up, the snapshot is written and marked partial: it holds
+what was verified, folders that were not reached keep their previous state, and nothing
+is recorded as deleted. The command exits with code 2; run it again to finish. If
+nothing could be backed up the run fails (exit 1) and no snapshot is written. What was
+downloaded is kept either way, so the next run resumes where this one stopped.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadOnlineConfig(opts)
@@ -74,7 +83,7 @@ written; the next run carries on and reuses what was stored.`,
 				return err
 			}
 			defer func() { _ = src.Close() }()
-			bo := engine.BackupOptions{}
+			bo := engine.BackupOptions{Full: full}
 			if opts.verbose {
 				bo.Logf = func(format string, args ...any) { _, _ = fmt.Fprintf(cmd.ErrOrStderr(), format+"\n", args...) }
 			}
@@ -84,23 +93,44 @@ written; the next run carries on and reuses what was stored.`,
 			}
 			out := cmd.OutOrStdout()
 			if opts.json {
-				return writeJSON(out, rep)
+				if err := writeJSON(out, rep); err != nil {
+					return err
+				}
+			} else {
+				printBackup(out, rep)
 			}
-			printBackup(out, rep)
+			if rep.Partial() {
+				return &exitCodeError{code: exitPartial, msg: "the backup is partial: not every folder was read. Run it again to finish."}
+			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&full, "full", false, "list every folder in full instead of trusting what the server says changed")
+	return cmd
 }
 
 func printBackup(out io.Writer, rep *engine.BackupReport) {
-	_, _ = fmt.Fprintf(out, "Snapshot %d: %d messages in %d folders\n", rep.Snapshot, rep.Messages, len(rep.Folders))
+	state := ""
+	if rep.Partial() {
+		state = " (partial)"
+	}
+	_, _ = fmt.Fprintf(out, "Snapshot %d%s: %d messages in %d folders\n", rep.Snapshot, state, rep.Messages, len(rep.Folders))
 	_, _ = fmt.Fprintf(out, "  messages  +%d new, -%d deleted, ~%d flag changes\n", rep.New, rep.Closed, rep.Reflagged)
 	_, _ = fmt.Fprintf(out, "  storage   %d blob(s) written (%s), %d already stored\n", rep.BlobsAdded, humanBytes(rep.BytesRaw), rep.BlobsReused)
+	modes := map[string]int{}
+	for _, f := range rep.Folders {
+		modes[f.Mode]++
+	}
+	read := fmt.Sprintf("%d body(ies) downloaded", rep.Fetched)
+	if rep.SkippedByEmailID > 0 {
+		read += fmt.Sprintf(", %d skipped (EMAILID)", rep.SkippedByEmailID)
+	}
+	_, _ = fmt.Fprintf(out, "  read      %s; folders: %d unchanged, %d incremental, %d full\n", read, modes["unchanged"], modes["incremental"], modes["full"])
 	if rep.NewFolders > 0 || rep.GoneFolders > 0 {
 		_, _ = fmt.Fprintf(out, "  folders   +%d new, -%d gone\n", rep.NewFolders, rep.GoneFolders)
 	}
 	for _, w := range rep.Warnings {
-		_, _ = fmt.Fprintf(out, "warning: %s\n", w)
+		_, _ = fmt.Fprintf(out, "warning: %s\n", clean(w))
 	}
 }
 
