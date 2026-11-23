@@ -28,3 +28,9 @@ deleted_grace = "180d"   # mail gone from the server stays restorable at least t
 max_deleted_percent = 10   # of messages in the previous snapshot; 0 turns it off
 max_deleted_count   = 500  # 0 turns it off
 on_alert = "/usr/local/bin/notify-me 'imapvault alert: {account} {summary}'"
+
+# Encryption at rest (optional, decided at `imapvault init`, cannot be added later).
+# Generate a key with `imapvault keygen --out ~/.config/imapvault/NAME.key`, then:
+# [encryption]
+# recipients = ["age1..."]   # public keys; add a second, offline recovery key
+# identity_file = "~/.config/imapvault/NAME.key"   # private key; omit on a backup-only machine

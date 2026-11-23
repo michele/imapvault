@@ -7,3 +7,9 @@ username = "you@example.com"
 
 [repository]
 path = "~/imapvault/example"   # must resolve to an absolute path; ~ and $VAR are expanded
+
+# Encryption at rest (optional, decided at `imapvault init`, cannot be added later).
+# Generate a key with `imapvault keygen --out ~/.config/imapvault/NAME.key`, then:
+# [encryption]
+# recipients = ["age1..."]   # public keys; add a second, offline recovery key
+# identity_file = "~/.config/imapvault/NAME.key"   # private key; omit on a backup-only machine

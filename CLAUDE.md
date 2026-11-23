@@ -13,6 +13,7 @@ Read `docs/PLAN.md` before starting any task. Work on one milestone at a time.
 - IMAP: `github.com/emersion/go-imap/v2` (same version as quietbox)
 - Index: SQLite via `modernc.org/sqlite` (pure Go, keeps the build static), WAL mode
 - Compression: zstd via `github.com/klauspost/compress/zstd` (pure Go)
+- Encryption: age via `filippo.io/age` (pure Go), imported only by `internal/seal`
 - CLI: `github.com/spf13/cobra`
 - Config: one TOML file per account (`github.com/pelletier/go-toml/v2`), same scheme as quietbox:
   `$XDG_CONFIG_HOME/imapvault/<account>.toml`, selected with `--account NAME`
@@ -35,6 +36,7 @@ internal/config/      TOML config, accounts, password sources (start as a copy o
 internal/mail/        Source interface + Folder/Message/Flags types (no IMAP imports here)
 internal/imapsource/  implementation of mail.Source using go-imap v2 (read-only + APPEND for restore)
 internal/repo/        repository on disk: layout, format version, lock, init/open
+internal/seal/        the only age importer: seal/open index values, blob encryption, folder-name HMAC, canary, keygen
 internal/objects/     content-addressed blob store: put/get/has/verify, atomic writes
 internal/index/       SQLite schema, migrations, queries (folders, entries, snapshots, alerts)
 internal/plan/        PURE functions: (index state, server listing) -> sync plan; retention policy -> keep set;
@@ -59,6 +61,9 @@ mass-deletion guard). Commands never touch the repository or the server directly
 6. Never log message bodies, subjects or credentials. Log hashes, UIDs and folder names.
 7. Any change to the on-disk format bumps `format_version` in the repo config and ships a migration
    (or a clear refusal to open newer/older repos).
+8. **Backup never needs the private key.** The backup, prune and `check --read-data` paths must not resolve or
+   use an identity. What they must read back is plaintext; everything descriptive is written sealed and read only
+   by commands that hold the key. Never log or put into an error the bytes of an object or a decrypt failure.
 
 ## Identity model
 

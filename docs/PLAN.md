@@ -25,7 +25,7 @@ and `imapvault restore` puts the mail back.
 
 ## Non-goals (for v1)
 
-- Encryption at rest and remote backends (S3/B2). The format must leave room for both (see "Repository format").
+- Remote backends (S3/B2). The format must leave room for them (see "Repository format"). Encryption at rest is **in v1**: see "Encryption".
 - TUI snapshot browser, full-text search, export to mbox/Maildir (see "Later").
 - Two-way sync and migration-as-a-feature (restore to another server covers it).
 - Contacts and calendars (not IMAP).
@@ -67,6 +67,12 @@ deleted_grace = "180d"   # mail gone from the server stays restorable at least t
 max_deleted_percent = 10   # of messages in the previous snapshot
 max_deleted_count   = 500
 on_alert = "/usr/local/bin/notify-me 'imapvault alert: {account} {summary}'"
+
+[encryption]               # optional. Decided at `imapvault init`; it cannot be changed later.
+recipients = ["age1..."]   # PUBLIC keys (see `imapvault keygen`). Set = the repository is encrypted.
+identity_file = "~/.config/imapvault/personal.key"   # PRIVATE key. Only on machines that read mail.
+# or identity_command = "op read op://Personal/imapvault-key/private"
+# or env IMAPVAULT_IDENTITY[_<ACCOUNT>] holding the key text
 ```
 
 The repository is bound to the account (host + username) at `init` time and refuses to back up
@@ -76,7 +82,7 @@ a different account.
 
 ```
 <repo>/
-  repo.toml            format_version, repo id, account binding, created_at
+  repo.toml            format_version (2), repo id, folder_key, account binding, [encryption], created_at
   objects/ab/cdef…     one blob per unique raw message, named by sha256
   index.db             SQLite (WAL)
   index-backups/       VACUUM INTO copy after each successful run, keep the last 7
@@ -84,9 +90,11 @@ a different account.
   tmp/                 staging for atomic writes
 ```
 
-**Blob envelope.** Each object file starts with a 1-byte header: bits for compression (zstd)
-and, later, encryption. v1 writes `zstd, no encryption`. Readers must reject unknown bits.
-This gives encryption somewhere to go without a format break for old blobs.
+**Blob envelope.** Each object file starts with a 1-byte header: bit 0 = zstd, bit 1 = encrypted.
+Readers reject unknown bits and any object without the zstd bit. A plain repository writes `0x01` and the
+payload is `zstd(raw)`. An encrypted one writes `0x03` and the payload is `age(zstd(raw))`: compress, then
+encrypt. The blob key is always the SHA-256 of the *raw* message, so deduplication works the same in both modes
+(age output is randomised, so dedupe keys on the plaintext hash and never on the file).
 
 **Index (SQLite).** Snapshots are not copies. Each row records an *interval* of validity,
 so the index grows with changes rather than with (messages × snapshots).
@@ -94,16 +102,74 @@ so the index grows with changes rather than with (messages × snapshots).
 | Table | Purpose |
 |---|---|
 | `runs` | id, started_at, finished_at, status (`complete`, `partial`, `failed`), server capabilities seen |
-| `snapshots` | id = run id of a complete or partial run, created_at, `pinned`, `flagged`, note, counts |
-| `folders` | id, name, delimiter, special-use, uidvalidity, last_uid, highest_modseq, first_seen_run, gone_run |
-| `blobs` | sha256, size, internal_date, message_id (header, for display/search), emailid, first_seen_run |
+| `snapshots` | id = run id of a complete or partial run, created_at, `pinned`, `flagged`, `forgotten`, `note_sealed`, counts |
+| `folders` | id, `name_hash`, `name_sealed`, delimiter, special-use, uidvalidity, last_uid, highest_modseq, first_seen_run, gone_run |
+| `blobs` | sha256, size, `stored_sha256`, `meta_sealed` (Message-ID, INTERNALDATE, From/To/Subject/Date), emailid, first_seen_run |
 | `entries` | folder_id, uidvalidity, uid, blob, flags, valid_from_run, valid_to_run (NULL = still present) |
-| `alerts` | id, run_id, kind, summary, acknowledged_at |
+| `alerts` | id, run_id, kind, `summary_sealed`, created_at, acknowledged_at |
 
 A snapshot at run R = every `entries` row with `valid_from_run <= R` and
 (`valid_to_run IS NULL` or `valid_to_run > R`). A flag change closes the old row and opens
 a new one. A deletion closes the row. A move closes one row and opens another that points
 at the same blob.
+
+## Encryption
+
+Encryption at rest uses [age](https://age-encryption.org) and is chosen once, at `init`. The point of the design
+is **asymmetry**: a cron job or NAS that holds only the *public* keys can back up, prune and check integrity, and
+cannot read a single message. The *private* key is needed only where mail is read.
+
+| Needs only the public key (recipients) | Needs the private key (identity) |
+|---|---|
+| `init`, `backup`, `forget`, `prune`, `check`, `check --read-data`, `ack`, `pin`; `snapshots` and `alerts` (without notes and summaries; the `on_alert` hook gets its summary live) | `restore`, `show`, `ls` (names and headers), `diff` (names), snapshot notes and alert summaries, the TUI, `check --decrypt` |
+
+**What is encrypted, and what must stay readable.** Backup reads the index on every run to diff against the
+server, so anything it has to read back stays plaintext. Everything descriptive is *sealed*: age-encrypted
+into `*_sealed` columns that backup writes and never reads.
+
+| Plaintext | Sealed |
+|---|---|
+| message bodies are never plaintext: object files are `age(zstd(raw))` | folder names (`name_sealed`) |
+| folder id, `name_hash`, delimiter, special-use, UIDVALIDITY, last_uid, MODSEQ | Message-ID, INTERNALDATE, From/To/Subject/Date (`meta_sealed`) |
+| entry positions (folder, UIDVALIDITY, UID), blob key, **flags** (the flag diff needs them) | snapshot notes, alert summaries |
+| blob size, EMAILID, `stored_sha256` | |
+| run and snapshot ids, timestamps, counts | |
+
+**Folder names** are looked up through `name_hash = HMAC-SHA256(folder_key, name)`. `folder_key` is random, lives
+in `repo.toml` and is *not* secret from someone holding the whole repository: it only keeps unique names ("Clients/Acme-case")
+out of the index for someone who gets the index alone. A person with the full repository can still test guessable names
+("INBOX", "Sent"). It lives in the repository on purpose, because a key kept elsewhere that got lost would make every folder
+look new and trip the mass-deletion guard.
+
+**What an attacker with the repository (but no private key) still learns.** The number of messages and folders and the
+folder tree's shape; message sizes; flags and keywords (for example a `$Label`); EMAILIDs; when each run happened and how
+much changed; and whether one specific known message is in the repository, because the blob key is the SHA-256 of the
+plaintext. These are the cost of backing up without the private key. They are not message content or metadata.
+
+**Integrity without the private key.** Every blob records `stored_sha256`, the SHA-256 of the exact object file.
+`check --read-data` compares each object with it, which finds bit rot and truncation on the backup machine itself. It
+cannot see an attacker who rewrites an object *and* its row in the index; only decrypting authenticates data
+(age uses authenticated encryption), which is what `check --decrypt` does, with the private key.
+
+**Keys.** `imapvault keygen --out FILE` writes an age identity (mode 0600) and prints the recipient. Add **a second
+recipient**, a recovery key kept offline: age encrypts to all of them, any one opens the repository, and losing a single
+key file then does not lose the mailbox. Without any identity the data cannot be recovered by anyone. A wrong key is
+reported as "the age identity does not match this repository" (a canary in `repo.toml`), not as corruption.
+`repo.toml` is the source of truth for the recipients; backup refuses a config whose recipients differ. Changing them is a
+later `rekey` command (see "Later").
+
+**Recovery without imapvault.** Objects are plain age files behind a one-byte header, so the stock tools suffice:
+
+```sh
+tail -c +2 objects/ab/cdef... | age -d -i personal.key | zstd -d > message.eml
+```
+
+**Not encrypted, deliberately.** `repo.toml`, the SQLite structure and the plaintext columns above, file names (the
+blob hashes), and anything on the IMAP connection. A repository created without recipients is entirely plaintext, says so
+at `init`, and cannot be encrypted later (create a new repository and back up again).
+
+**Format.** Encryption bumped `format_version` to 2. Version 1 was the unreleased pre-release layout (plaintext index,
+no encryption); there is no migration, and such a repository is refused with an instruction to re-create it.
 
 ## Backup run
 
@@ -170,7 +236,8 @@ imapvault restore --snapshot latest|<id>|2026-11-20T10:00 \
 
 | Command | What it does |
 |---|---|
-| `init` | create the repository for an account |
+| `keygen --out FILE` | generate an age key pair; print the recipient and a config snippet |
+| `init` | create the repository for an account (encrypted when `encryption.recipients` is set) |
 | `backup` | one backup run → snapshot |
 | `snapshots` | list snapshots (id, time, counts, pinned/flagged) |
 | `ls <snapshot> [folder]` | folders, or messages in a folder (date, from, size, hash). No bodies |
@@ -180,7 +247,7 @@ imapvault restore --snapshot latest|<id>|2026-11-20T10:00 \
 | `alerts`, `ack <id>` | guard alerts |
 | `forget`, `prune` | retention (`--dry-run`) |
 | `restore` | see above |
-| `check [--read-data]` | index consistency. With `--read-data`, re-hash every blob |
+| `check [--read-data] [--decrypt]` | index consistency. `--read-data` verifies every object (no key needed). `--decrypt` decrypts and re-hashes everything (needs the private key) |
 | `doctor` | connect, print server capabilities (CONDSTORE, QRESYNC, OBJECTID, SPECIAL-USE) and folder sizes |
 | `accounts` | list configured accounts |
 
@@ -208,8 +275,17 @@ also bumps `format_version` (safety rule 7). `Open` refuses a newer index and a 
 leftovers in `tmp/` and stray files as warnings (a crash may leave them); missing or corrupt data, a damaged index
 and dangling references are errors (exit 1). It only re-reads blobs with `--read-data`. `init` needs no password.
 
+**M1.5 Encryption at rest (done).** age, pulled forward from "Later" while nothing real was stored and the format was free
+to change. `internal/seal` (the only importer of age), encrypted blob envelope with a ciphertext hash, sealed index columns,
+`repo.toml` format 2 with `folder_key` and an encryption binding, `keygen`, `check --decrypt`, `[encryption]` config.
+*Done when* an encrypted repository can be created, written and checked with no private key, and read back with it.
+*Findings:* age's parse errors quote the first bytes of the data they cannot parse, so `internal/seal` replaces them with a
+coarse reason (safety rule 6); a test pins this. The stock `age` CLI plus `zstd -d` recovers a blob (see "Encryption"). Hybrid
+post-quantum recipients (`age1pq1...`) parse too, but age refuses to mix them with classic ones in one repository.
+
 **M2 First full backup.** `mail.Source` + imapsource (EXAMINE, BODY.PEEK, batching), engine writes
-entries + snapshot, `snapshots`, `ls`, `show`, `doctor`. *Done when* a seeded dovecot mailbox backs up
+entries + snapshot (sealing folder names and message metadata with the repository's recipients from `repo.toml`, looking
+folders up by `FolderHash`, and never calling the identity code: a backup must work with no private key), `snapshots`, `ls`, `show`, `doctor`. *Done when* a seeded dovecot mailbox backs up
 and `ls` matches the server exactly.
 
 **M3 Incremental.** New UIDs, flag diff, expunges, folder new/gone/rename, UIDVALIDITY reset,
@@ -249,7 +325,8 @@ restore appends nothing.
 
 ## Later
 
-- Encryption at rest (age, using the reserved envelope bits; index encryption TBD)
+- `rekey`: change a repository's recipients (re-wrap blobs, re-seal the index columns), for lost or rotated keys
+- Plugin and SSH-key identities (hardware tokens), if people ask
 - Remote backends: S3-compatible (B2, Hetzner, MinIO), or document repo-on-rclone
 - Read-only TUI to browse snapshots (bubbletea): folders, message list, headers, diff between snapshots
 - Search: SQLite FTS5 over headers (from, to, subject, date)
