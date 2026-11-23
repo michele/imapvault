@@ -1,0 +1,9 @@
+From: alice@friends.test
+To: me@imapvault.test
+Subject: Hello
+Date: Sun, 03 May 2026 09:00:00 +0000
+Message-ID: <inbox-hello@seed.imapvault.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Hi there.

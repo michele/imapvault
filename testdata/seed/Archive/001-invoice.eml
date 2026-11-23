@@ -1,0 +1,9 @@
+From: billing@shop.test
+To: me@imapvault.test
+Subject: Invoice 1001
+Date: Wed, 02 Jan 2025 12:00:00 +0000
+Message-ID: <archive-invoice@seed.imapvault.test>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Invoice.

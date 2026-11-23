@@ -1,0 +1,13 @@
+# Config for the docker test server (see docker-compose.test.yml).
+# The password comes from IMAPVAULT_IMAP_PASSWORD (use "test").
+[imap]
+host = "127.0.0.1"
+port = 1143
+tls = "none"
+username = "me@imapvault.test"
+
+[repository]
+path = "/tmp/imapvault-itest/repo"   # tests use t.TempDir() instead; this is for manual runs
+
+[folders]
+exclude = ["Junk"]
