@@ -119,6 +119,41 @@ func (s *Store) Has(k Key) (bool, error) {
 	}
 }
 
+// Size is the size in bytes of the object file for the key (what it occupies on
+// disk, not the message size). A missing object is ErrNotFound.
+func (s *Store) Size(k Key) (int64, error) {
+	st, err := os.Stat(s.path(k))
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, fmt.Errorf("%w: %s", ErrNotFound, k)
+	}
+	if err != nil {
+		return 0, err
+	}
+	return st.Size(), nil
+}
+
+// Delete removes the object file for the key and returns the bytes it freed. An
+// object that is already gone is not an error (a prune interrupted after its
+// index commit is resumed by running it again). The now empty shard directory is
+// removed too. Only prune may call this, with the repository lock held and after
+// the index no longer references the object.
+func (s *Store) Delete(k Key) (int64, error) {
+	p := s.path(k)
+	st, err := os.Stat(p)
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return 0, err
+	}
+	// Fails, harmlessly, while the shard still holds other objects.
+	_ = os.Remove(filepath.Dir(p))
+	return st.Size(), nil
+}
+
 // Put stores raw and returns its key and the SHA-256 of the exact file bytes
 // ("stored", which the index records so integrity can be checked without the
 // private key). added is false when the blob already existed (deduplication); the

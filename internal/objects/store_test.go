@@ -269,3 +269,86 @@ func FuzzGetNeverPanics(f *testing.F) {
 		}
 	})
 }
+
+func TestSizeIsTheFileSize(t *testing.T) {
+	s, _ := newStore(t)
+	key, _, _, err := s.Put(bytes.Repeat([]byte("hello "), 1000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(s.path(key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Size(key)
+	if err != nil || got != st.Size() {
+		t.Fatalf("size = %d (err %v), want %d", got, err, st.Size())
+	}
+}
+
+func TestSizeOfAMissingObject(t *testing.T) {
+	s, _ := newStore(t)
+	if _, err := s.Size(Key(sha256.Sum256([]byte("nope")))); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeleteRemovesTheObjectAndReportsItsSize(t *testing.T) {
+	s, _ := newStore(t)
+	key, _, _, err := s.Put([]byte("to be pruned"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := s.Size(key)
+	freed, err := s.Delete(key)
+	if err != nil || freed != want || freed == 0 {
+		t.Fatalf("delete = %d (err %v), want %d", freed, err, want)
+	}
+	if ok, _ := s.Has(key); ok {
+		t.Fatal("the object is still there")
+	}
+	// The shard directory is left behind only if it holds something else.
+	if _, err := os.Stat(filepath.Dir(s.path(key))); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the empty shard directory was not removed: %v", err)
+	}
+	// The key can be stored again.
+	if _, _, added, err := s.Put([]byte("to be pruned")); err != nil || !added {
+		t.Fatalf("put after delete: added=%v err=%v", added, err)
+	}
+}
+
+func TestDeleteOfAMissingObjectIsNotAnError(t *testing.T) {
+	s, _ := newStore(t)
+	freed, err := s.Delete(Key(sha256.Sum256([]byte("never stored"))))
+	if err != nil || freed != 0 {
+		t.Fatalf("delete = %d (err %v), want 0 and no error", freed, err)
+	}
+}
+
+func TestDeleteKeepsAShardThatHoldsOtherObjects(t *testing.T) {
+	s, _ := newStore(t)
+	// Find two raws that land in the same shard directory.
+	first := []byte("seed")
+	k1, _, _, err := s.Put(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var k2 Key
+	for i := 0; ; i++ {
+		raw := []byte{byte(i), byte(i >> 8), 'x'}
+		k := Key(sha256.Sum256(raw))
+		if k != k1 && k[0] == k1[0] {
+			if _, _, _, err := s.Put(raw); err != nil {
+				t.Fatal(err)
+			}
+			k2 = k
+			break
+		}
+	}
+	if _, err := s.Delete(k1); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := s.Has(k2); !ok {
+		t.Fatal("deleting one object removed its shard neighbour")
+	}
+}
