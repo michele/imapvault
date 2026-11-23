@@ -344,3 +344,50 @@ func TestVacuumInto(t *testing.T) {
 		t.Error("VacuumInto must not overwrite an existing file")
 	}
 }
+
+func TestApplyPruneDryRunCountsLikeARealRunAndChangesNothing(t *testing.T) {
+	f := newHistory(t)
+	if err := f.db.SetForgotten([]int64{1}); err != nil {
+		t.Fatal(err)
+	}
+	closed, _ := f.db.ClosedEntries()
+	var ids []int64
+	for _, e := range closed {
+		if e.Blob == f.b.SHA {
+			ids = append(ids, e.ID)
+		}
+	}
+	p := PruneApply{Entries: ids, Blobs: [][32]byte{f.b.SHA, f.orphan.SHA}, Snapshots: []int64{1}}
+
+	p.DryRun = true
+	dry, err := f.db.ApplyPrune(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := f.db.HasBlob(f.b.SHA); !ok {
+		t.Fatal("a dry run removed a blob")
+	}
+	if ok, _ := f.db.HasSnapshot(1); !ok {
+		t.Fatal("a dry run removed a snapshot")
+	}
+	after, _ := f.db.ClosedEntries()
+	if len(after) != len(closed) {
+		t.Fatalf("a dry run removed entries: %d left of %d", len(after), len(closed))
+	}
+
+	p.DryRun = false
+	real, err := f.db.ApplyPrune(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dry != real {
+		t.Errorf("dry run counted %+v, the real run %+v", dry, real)
+	}
+}
+
+func TestApplyPruneDryRunStillRefusesAWrongPlan(t *testing.T) {
+	f := newHistory(t)
+	if _, err := f.db.ApplyPrune(PruneApply{Blobs: [][32]byte{f.a.SHA}, DryRun: true}); err == nil {
+		t.Fatal("a dry run must report a plan that would drop a referenced blob")
+	}
+}

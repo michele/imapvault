@@ -123,6 +123,9 @@ type PruneApply struct {
 	Entries   []int64    // closed entry ids
 	Blobs     [][32]byte // blob rows
 	Snapshots []int64    // forgotten, unpinned snapshot rows
+	// DryRun runs everything, checks included, and rolls it back: the counts are
+	// exactly what a real run would remove.
+	DryRun bool
 }
 
 // PruneApplied counts what ApplyPrune removed.
@@ -184,6 +187,9 @@ func (db *DB) ApplyPrune(p PruneApply) (PruneApplied, error) {
 	}
 	n, _ := r.RowsAffected()
 	res.Folders = int(n)
+	if p.DryRun {
+		return res, nil // the deferred Rollback undoes it
+	}
 	return res, tx.Commit()
 }
 
