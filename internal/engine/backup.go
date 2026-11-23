@@ -113,7 +113,7 @@ func Backup(ctx context.Context, cfg *config.Config, src mail.Source, opts Backu
 		_ = db.FinishRun(run, index.RunFailed, opts.Now())
 		return nil, err
 	}
-	if err := db.CompleteRun(run, opts.Now()); err != nil {
+	if err := db.CompleteRun(run, index.RunComplete, opts.Now()); err != nil {
 		_ = db.FinishRun(run, index.RunFailed, opts.Now())
 		return nil, err
 	}

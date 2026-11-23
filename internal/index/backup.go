@@ -132,15 +132,17 @@ func (db *DB) MarkFolderGone(folderID, run int64) error {
 
 // OpenEntry is an entry that is still valid.
 type OpenEntry struct {
-	ID    int64
-	UID   uint32
-	Blob  [32]byte
-	Flags string
+	ID          int64
+	UID         uint32
+	UIDValidity uint32
+	Blob        [32]byte
+	Flags       string
 }
 
-// OpenEntries returns the open entries of a folder, by UID.
+// OpenEntries returns the open entries of a folder, every UIDVALIDITY
+// generation, by generation then UID.
 func (db *DB) OpenEntries(folderID int64) ([]OpenEntry, error) {
-	rows, err := db.Query(`SELECT id, uid, blob, flags FROM entries WHERE folder_id = ? AND valid_to_run IS NULL ORDER BY uid`, folderID)
+	rows, err := db.Query(`SELECT id, uid, uidvalidity, blob, flags FROM entries WHERE folder_id = ? AND valid_to_run IS NULL ORDER BY uidvalidity, uid`, folderID)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +151,7 @@ func (db *DB) OpenEntries(folderID int64) ([]OpenEntry, error) {
 	for rows.Next() {
 		var e OpenEntry
 		var b []byte
-		if err := rows.Scan(&e.ID, &e.UID, &b, &e.Flags); err != nil {
+		if err := rows.Scan(&e.ID, &e.UID, &e.UIDValidity, &b, &e.Flags); err != nil {
 			return nil, err
 		}
 		if len(b) != len(e.Blob) {
@@ -217,13 +219,8 @@ func (db *DB) ApplyFolder(run, folderID int64, ch FolderChanges) error {
 	defer func() { _ = tx.Rollback() }()
 
 	for _, b := range ch.Blobs {
-		var emailid any
-		if b.EmailID != "" {
-			emailid = b.EmailID
-		}
-		if _, err := tx.Exec(`INSERT OR IGNORE INTO blobs(sha256, size, stored_sha256, meta_sealed, emailid, first_seen_run) VALUES (?, ?, ?, ?, ?, ?)`,
-			b.SHA[:], b.Size, b.StoredSHA[:], b.MetaSealed, emailid, run); err != nil {
-			return fmt.Errorf("insert blob: %w", err)
+		if err := insertBlob(tx, run, b); err != nil {
+			return err
 		}
 	}
 	for _, id := range ch.Close {
@@ -249,6 +246,87 @@ func (db *DB) ApplyFolder(run, folderID int64, ch FolderChanges) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// ApplyBatch commits blobs and new entries fetched so far, in one transaction,
+// without touching the folder row: last_uid and the mod-sequence advance only
+// when ApplyFolder finishes the folder. A run killed between batches leaves
+// entries above last_uid; the next run diffs them like fresh ones and does not
+// fetch their bodies again. The blob objects must already be durable (rule 2).
+func (db *DB) ApplyBatch(run, folderID int64, uidValidity uint32, blobs []NewBlob, opens []NewEntry) error {
+	if len(blobs) == 0 && len(opens) == 0 {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, b := range blobs {
+		if err := insertBlob(tx, run, b); err != nil {
+			return err
+		}
+	}
+	for _, e := range opens {
+		if err := openEntry(tx, folderID, uidValidity, run, e); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func insertBlob(tx *sql.Tx, run int64, b NewBlob) error {
+	var emailid any
+	if b.EmailID != "" {
+		emailid = b.EmailID
+	}
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO blobs(sha256, size, stored_sha256, meta_sealed, emailid, first_seen_run) VALUES (?, ?, ?, ?, ?, ?)`,
+		b.SHA[:], b.Size, b.StoredSHA[:], b.MetaSealed, emailid, run); err != nil {
+		return fmt.Errorf("insert blob: %w", err)
+	}
+	return nil
+}
+
+// EmailBlob is a stored blob an EMAILID points at.
+type EmailBlob struct {
+	SHA  [32]byte
+	Size int64
+}
+
+// BlobsByEmailID looks up blobs by EMAILID (RFC 8474), for the download skip.
+// Unknown ids are absent from the result. If two blobs ever carry one id the one
+// with the smaller hash wins, so the answer does not depend on row order.
+func (db *DB) BlobsByEmailID(ids []string) (map[string]EmailBlob, error) {
+	out := map[string]EmailBlob{}
+	const chunk = 500
+	for start := 0; start < len(ids); start += chunk {
+		part := ids[start:min(start+chunk, len(ids))]
+		args := make([]any, len(part))
+		for i, id := range part {
+			args[i] = id
+		}
+		rows, err := db.Query(`SELECT emailid, sha256, size FROM blobs WHERE emailid IN (`+strings.TrimSuffix(strings.Repeat("?,", len(part)), ",")+`) ORDER BY sha256 DESC`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id string
+			var h []byte
+			var eb EmailBlob
+			if err := rows.Scan(&id, &h, &eb.Size); err != nil {
+				_ = rows.Close()
+				return nil, err
+			}
+			copy(eb.SHA[:], h)
+			out[id] = eb // DESC order: the smallest hash is written last and wins
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		_ = rows.Close()
+	}
+	return out, nil
 }
 
 func closeEntry(tx *sql.Tx, id, run int64) error {
@@ -287,15 +365,20 @@ type Snapshot struct {
 const entryInSnapshot = `e.valid_from_run <= ?1 AND (e.valid_to_run IS NULL OR e.valid_to_run > ?1)`
 const folderInSnapshot = `f.first_seen_run <= ?1 AND (f.gone_run IS NULL OR f.gone_run > ?1)`
 
-// CompleteRun marks run complete and writes its snapshot, atomically, computing
-// the snapshot's counts from the entries. A run is either a snapshot or it isn't.
-func (db *DB) CompleteRun(run int64, now time.Time) error {
+// CompleteRun ends run with status (RunComplete or RunPartial) and writes its
+// snapshot, atomically, computing the snapshot's counts from the entries. A run
+// is either a snapshot or it isn't. A partial run's snapshot is what the index
+// holds at that moment: folders the run did not reach keep their previous entries.
+func (db *DB) CompleteRun(run int64, status string, now time.Time) error {
+	if status != RunComplete && status != RunPartial {
+		return fmt.Errorf("a run cannot be completed with status %q", status)
+	}
 	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.Exec(`UPDATE runs SET status = 'complete', finished_at = ?2 WHERE id = ?1`, run, ts(now)); err != nil {
+	if _, err := tx.Exec(`UPDATE runs SET status = ?3, finished_at = ?2 WHERE id = ?1`, run, ts(now), status); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO snapshots(id, created_at, folders, messages)
@@ -442,4 +525,70 @@ func (db *DB) SnapshotFolderCounts(run int64) (map[int64]int, error) {
 		out[id] = n
 	}
 	return out, rows.Err()
+}
+
+// SnapChange is an entry that is in one snapshot and not in the other.
+type SnapChange struct {
+	FolderID    int64
+	UIDValidity uint32
+	UID         uint32
+	Blob        [32]byte
+	Flags       string
+}
+
+// SnapshotChanges returns the entries valid at snapshot a but not at b
+// (removed) and valid at b but not at a (added). a must be older than b. A flag
+// change is one removed and one added entry; the caller pairs them.
+func (db *DB) SnapshotChanges(a, b int64) (removed, added []SnapChange, err error) {
+	if a >= b {
+		return nil, nil, fmt.Errorf("snapshot %d is not older than snapshot %d", a, b)
+	}
+	const sel = `SELECT e.folder_id, e.uidvalidity, e.uid, e.blob, e.flags FROM entries e WHERE `
+	const order = ` ORDER BY e.folder_id, e.uidvalidity, e.uid, e.id`
+	// valid at a: from <= a and (to is null or to > a). Not valid at b (b > a)
+	// then means the entry was closed by b: to <= b.
+	removed, err = db.snapChanges(sel+`e.valid_from_run <= ?1 AND e.valid_to_run > ?1 AND e.valid_to_run <= ?2`+order, a, b)
+	if err != nil {
+		return nil, nil, err
+	}
+	// valid at b but not at a: opened after a, still open at b.
+	added, err = db.snapChanges(sel+`e.valid_from_run > ?1 AND e.valid_from_run <= ?2 AND (e.valid_to_run IS NULL OR e.valid_to_run > ?2)`+order, a, b)
+	if err != nil {
+		return nil, nil, err
+	}
+	return removed, added, nil
+}
+
+func (db *DB) snapChanges(query string, a, b int64) ([]SnapChange, error) {
+	rows, err := db.Query(query, a, b)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var out []SnapChange
+	for rows.Next() {
+		var c SnapChange
+		var h []byte
+		if err := rows.Scan(&c.FolderID, &c.UIDValidity, &c.UID, &h, &c.Flags); err != nil {
+			return nil, err
+		}
+		if len(h) != len(c.Blob) {
+			return nil, fmt.Errorf("entry has a %d-byte blob key", len(h))
+		}
+		copy(c.Blob[:], h)
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// FoldersInEither returns the folders that existed at snapshot a or at b, by id.
+func (db *DB) FoldersInEither(a, b int64) ([]Folder, error) {
+	rows, err := db.Query(`SELECT `+folderCols+` FROM folders f
+		WHERE (f.first_seen_run <= ?1 AND (f.gone_run IS NULL OR f.gone_run > ?1))
+		   OR (f.first_seen_run <= ?2 AND (f.gone_run IS NULL OR f.gone_run > ?2))
+		ORDER BY f.id`, a, b)
+	if err != nil {
+		return nil, err
+	}
+	return scanFolders(rows)
 }
