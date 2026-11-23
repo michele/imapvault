@@ -11,7 +11,7 @@ An open-source IMAP backup tool: point-in-time **snapshots** of a mailbox in a l
 repository, a grace period for deleted mail, mass-deletion alerts, and restore of any
 snapshot, folder or message back to an IMAP server.
 
-**Status: pre-alpha (M5, retention).** `init`, `keygen`, `backup`, `snapshots`, `ls`, `show`, `diff`, `alerts`, `ack`, `pin`, `unpin`, `forget`, `prune`, `doctor` and `check` work. There is no restore yet. See [docs/PLAN.md](docs/PLAN.md).
+**Status: pre-alpha (M6, restore).** `init`, `keygen`, `backup`, `snapshots`, `ls`, `show`, `diff`, `alerts`, `ack`, `pin`, `unpin`, `forget`, `prune`, `restore`, `doctor` and `check` work. See [docs/PLAN.md](docs/PLAN.md).
 
 ## Develop
 
@@ -46,6 +46,8 @@ imapvault --account personal forget --dry-run  # which snapshots the [retention]
 imapvault --account personal forget            # mark them forgotten (deletes nothing)
 imapvault --account personal prune --dry-run   # what prune would remove, with sizes
 imapvault --account personal prune             # remove what nothing needs and the grace period no longer holds
+imapvault --account personal restore --dry-run # preview what a restore would add; writes nothing
+imapvault --account personal restore --deleted-since 7d --in-place   # preview, then approve (see Restore)
 imapvault --account personal check             # index + object presence; exit 1 on errors
 imapvault --account personal check --read-data # verify every object (no private key needed)
 imapvault --account personal check --decrypt   # decrypt and re-hash everything (needs the key)
@@ -74,6 +76,45 @@ that were not reached keep their previous state, and nothing is recorded as dele
 up, no snapshot is written. Run `backup` again to finish.
 
 Exit codes: `0` ok, `1` error, `2` partial backup, `3` guard alert (`3` wins when a run is both).
+
+## Restore
+
+`restore` is the only command that writes to a server, and the server is the source of truth, so it
+cannot write until you have seen exactly what it will do and said yes:
+
+1. **Preview.** It prints the target account, the folders it would create, the existing folders it
+   would add to, how many messages and bytes, and how many are skipped because they are already there,
+   and ends with a **plan token**. A restore into a different account than the repository's is marked
+   `DIFFERENT ACCOUNT`.
+2. **Approval.** Type the token when asked (at a terminal), or pass `--confirm TOKEN` (scripts). There
+   is no `--yes`: the token is a hash of the whole plan, and the plan is worked out again against the
+   server before anything is written, so a token for a plan that no longer holds writes nothing.
+3. **Opt-in per account.** The target account's config must contain the lines below. A backup-only
+   config (cron, a NAS) can never write, whatever is typed.
+
+```toml
+[restore]
+allow_append = true
+```
+
+Restore only creates folders and appends messages. It never deletes, moves, flags or overwrites
+anything, never restores the `\Deleted` flag, and never adds a message that is already in the target
+folder: run it twice and the second run says "Nothing to restore". Messages are appended in their
+original order with their original flags and dates. It needs the private key of an encrypted repository
+and writes nothing to the repository. The build enforces the rest: only `internal/imaptarget` can send
+`CREATE` or `APPEND`, only `internal/engine/restore.go` may import it, and its writer refuses any folder
+or count outside the approved plan.
+
+```sh
+imapvault --account personal restore                       # into Restored/<snapshot>/<folder>, next to your own
+imapvault --account personal restore --snapshot 2026-11-20T10:00 --folder INBOX
+imapvault --account personal restore --deleted-since 7d --in-place   # undo a mass deletion
+imapvault --account personal restore --message 3f9a1c2b --into "Recovered/{snapshot}"
+imapvault --account personal restore --to newaccount       # another configured account (needs its own allow_append)
+```
+
+`--deleted-since` restores messages deleted from the server within the window that are on it nowhere
+now; a message moved to a folder excluded from the backup looks deleted to the backup and is included.
 
 ## Mass-deletion guard
 

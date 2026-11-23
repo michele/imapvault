@@ -68,6 +68,9 @@ max_deleted_percent = 10   # of messages in the previous snapshot
 max_deleted_count   = 500
 on_alert = "/usr/local/bin/notify-me 'imapvault alert: {account} {summary}'"
 
+[restore]
+allow_append = false       # default. `restore` refuses to write to this account's server unless true
+
 [encryption]               # optional. Decided at `imapvault init`; it cannot be changed later.
 recipients = ["age1..."]   # PUBLIC keys (see `imapvault keygen`). Set = the repository is encrypted.
 identity_file = "~/.config/imapvault/personal.key"   # PRIVATE key. Only on machines that read mail.
@@ -412,9 +415,32 @@ objects prune deleted, and backup trusts the index (it does not re-download a me
 those stay missing**: use the newest copy and run `check`. The guard's "slow drip" gap (M4) is what the grace period
 covers. The itests backdate `runs.started_at` in `index.db` from the test, because the product has no clock hook.
 
-**M6 Restore.** Snapshot / folder / message / `--deleted-since`, `--into` and `--in-place`, `--to` another account,
-idempotency, dry-run. *Done when* the M4 "hack" itest ends with the mailbox restored and a second
+**M6 Restore (done).** Snapshot / folder / message / `--deleted-since`, `--into` and `--in-place`, `--to` another account,
+idempotency, dry-run, and the write guard rails. *Done when* the M4 "hack" itest ends with the mailbox restored and a second
 restore appends nothing.
+*Findings:* no schema change and no `format_version` bump: restore writes nothing to the repository. Four layers keep the
+server safe, each working without the others. (1) **Approval:** `plan.Restore` is pure and returns a plan whose `Token()` hashes
+the target, repository, source, mode, folders to create and every append; `plan.Approve` is the only way to build the
+`ApprovedRestore` that `engine.ApplyRestore` takes, and `PlanRestore` recomputes the plan from the live server, so a stale or
+wrong token writes nothing. There is no `--yes`; piping "yes" to stdin is not approval, and `/dev/null` does not count as a
+terminal. (2) **Config:** `[restore] allow_append` of the *target* account, re-checked in `ApplyRestore` as well as the CLI.
+(3) **Fence:** `mail.Fence` (folders to create, appends per folder) is built from the approved plan; `imaptarget`'s writer refuses
+anything outside it, spends a slot before each attempt (an ambiguous failure never becomes two copies), re-LISTs before a CREATE
+and drops `\Deleted` and `\Recent` itself. (4) **Walls:** an AST test allows only `CREATE`/`APPEND`, only in `writer.go`, and fails
+on any other write command or non-read-only `SELECT`; an import test allows go-imap only in `imapsource` and `imaptarget` (plus the
+dev tool `tools/seed`) and `imaptarget` only in `engine/restore.go`. A mutation of `plan.Approve` was caught by four tests.
+Messages are appended in original order (internal date, then UID) so the restored UIDs ascend. Duplicate detection is one
+read-only pass per existing target folder (Message-ID + size, else size + internal date to the second), consumed one-for-one, so
+restore, restore again gives an empty plan; this was a property test over random folders and duplicates. `--deleted-since` takes
+the last row of each position's history, closed within the window, whose blob has no open entry anywhere (`index.DeletedSince`):
+flag changes, moves and UIDVALIDITY renumbering are not deletions; a move into an excluded folder is, because the backup can no
+longer see it. Its prefix is `deleted-<UTC date>`, so a token made before midnight and used after it no longer matches. Snapshot
+specs accept a time (`2026-11-20T10:00`, local zone; a bare date means the end of that day). The `\Deleted` flag is not restored
+(the preview says how many messages had it). APPEND relies on the server creating missing parent folders for `Restored/1/INBOX`
+(dovecot does; RFC 3501 says SHOULD). **Test-harness finding:** closing a test client without LOGOUT left connections the server did
+not notice through the container's port forward, so the 10-connection limit starved the next package; `dialTestServer` now logs out.
+All itests pass against dovecot, including the "undo the hack" run and every no-approval path leaving the server's folder list,
+UIDNEXT, UIDVALIDITY and counts unchanged.
 
 **M7 Release prep.** README, example configs, systemd timer + cron docs, Dockerfile, goreleaser
 (reuse quietbox's setup), first test against real Fastmail (read-only backup only), v0.1.0.

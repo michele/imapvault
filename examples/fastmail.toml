@@ -29,6 +29,11 @@ max_deleted_percent = 10   # of messages in the previous snapshot; 0 turns it of
 max_deleted_count   = 500  # 0 turns it off
 on_alert = "/usr/local/bin/notify-me 'imapvault alert: {account} {summary}'"   # run directly, not through a shell; see the README
 
+# Writing to the server is off unless you turn it on: `imapvault restore` previews
+# without it, but refuses to append anything. Leave it out on a backup-only machine.
+# [restore]
+# allow_append = true
+
 # Encryption at rest (optional, decided at `imapvault init`, cannot be added later).
 # Generate a key with `imapvault keygen --out ~/.config/imapvault/NAME.key`, then:
 # [encryption]
