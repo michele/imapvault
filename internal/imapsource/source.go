@@ -78,6 +78,17 @@ var _ mail.Source = (*Source)(nil)
 
 // Dial connects and logs in.
 func Dial(ctx context.Context, o Options) (*Source, error) {
+	c, err := Connect(ctx, o)
+	if err != nil {
+		return nil, err
+	}
+	return &Source{c: c}, nil
+}
+
+// Connect dials, optionally upgrades with STARTTLS, and logs in. It issues no
+// other command, so what the session may do is decided by its caller:
+// internal/imaptarget wraps the same connection for restore, under its own fence.
+func Connect(ctx context.Context, o Options) (*imapclient.Client, error) {
 	if err := o.validate(); err != nil {
 		return nil, err
 	}
@@ -94,7 +105,7 @@ func Dial(ctx context.Context, o Options) (*Source, error) {
 		_ = c.Close()
 		return nil, fmt.Errorf("login as %s failed: %w", o.Username, err)
 	}
-	return &Source{c: c}, nil
+	return c, nil
 }
 
 // Capabilities returns the post-login capability list, sorted.
