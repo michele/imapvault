@@ -136,6 +136,7 @@ type Config struct {
 	Folders    Folders    `toml:"folders"`
 	Retention  Retention  `toml:"retention"`
 	Guard      Guard      `toml:"guard"`
+	Encryption Encryption `toml:"encryption"`
 
 	// Account is the --account name this configuration was loaded for ("" when
 	// loaded by path). It only affects the password lookup; it is never read
@@ -220,6 +221,10 @@ func parse(data []byte, getenv func(string) string, account string, requirePassw
 	if cfg.IMAP.Password == "" && account != "" {
 		cfg.IMAP.Password = getenv(PasswordEnv)
 	}
+	cfg.Encryption.Identity = getenv(IdentityEnvFor(account))
+	if cfg.Encryption.Identity == "" && account != "" {
+		cfg.Encryption.Identity = getenv(IdentityEnv)
+	}
 	cfg.applyDefaults()
 	if err := cfg.validate(getenv, requirePassword); err != nil {
 		return nil, err
@@ -277,6 +282,7 @@ func (c *Config) validate(getenv func(string) string, requirePassword bool) erro
 	c.validateFolders(add)
 	c.validateRetention(add)
 	c.validateGuard(add)
+	c.validateEncryption(add)
 	return errors.Join(errs...)
 }
 
