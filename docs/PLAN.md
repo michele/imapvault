@@ -85,7 +85,7 @@ a different account.
   repo.toml            format_version (2), repo id, folder_key, account binding, [encryption], created_at
   objects/ab/cdef…     one blob per unique raw message, named by sha256
   index.db             SQLite (WAL)
-  index-backups/       VACUUM INTO copy after each successful run, keep the last 7
+  index-backups/       VACUUM INTO copy after each backup run and each prune that changed the index, keep the last 7
   lock                 exclusive while a write (backup, prune, forget) runs
   tmp/                 staging for atomic writes
 ```
@@ -227,12 +227,23 @@ not cancelled by Ctrl-C. A failing hook is a warning: the alert is already recor
 
 ## Retention: `forget` and `prune`
 
-- `forget` applies the policy (restic semantics: keep_last / hourly / daily / weekly / monthly / yearly).
-  Pinned snapshots are always kept. It only marks snapshots as forgotten.
-- `prune` deletes `entries` rows that cover no kept snapshot **and** whose `valid_to_run` is older than
-  `deleted_grace`. Then it deletes blobs no remaining entry references, along with orphan blobs and tmp files.
-- Both support `--dry-run`, and both print counts and bytes.
-- Retention is a pure function (`plan.Retain(snapshots, policy, now) -> keep set`): table-test it.
+- `forget` applies the policy (restic semantics: keep_last / hourly / daily / weekly / monthly / yearly, buckets in the
+  local time zone, ISO weeks). Pinned snapshots and the latest one are always kept; a policy that keeps nothing is an
+  error. It only marks snapshots as forgotten. A forgotten snapshot stays addressable by number (`ls`, `show`, `diff`,
+  `restore`) and is listed by `snapshots --all` until prune removes what it showed. It works while alerts are
+  unacknowledged.
+- `prune` deletes `entries` rows that cover no kept snapshot (not forgotten, or pinned) **and** whose `valid_to_run`
+  started before `now - deleted_grace`. Then it deletes blobs no remaining entry references, forgotten snapshot rows
+  that are no longer complete (one of their entries went), gone folders nothing shows, orphan blobs and tmp files.
+  A forgotten snapshot whose messages are all still open entries is still complete and stays.
+  It refuses to run while an alert is unacknowledged, and never resolves an identity.
+- The index deletions commit in one transaction (every claim re-checked in SQL: a closed entry, an unreferenced blob, a
+  forgotten unpinned snapshot) *before* any file is removed; a crash leaves orphan files, never dangling references.
+- Both support `--dry-run` and print counts and bytes. A dry run takes the same exclusive lock and runs the same
+  transaction, then rolls it back, so its numbers (folders included) are those of a real run.
+- `plan.Retain(snapshots, policy, location)` and `plan.Prune(input)` are pure and table-tested.
+- Index copies: `index-backups/index-<UTC time>-<r<run>|prune>.db` after every backup run and after a prune that
+  removed something; the newest 7 are kept. There is no journal to rebuild the index from the objects (see Open questions).
 
 ## Restore
 
@@ -257,13 +268,13 @@ imapvault restore --snapshot latest|<id>|2026-11-20T10:00 \
 | `keygen --out FILE` | generate an age key pair; print the recipient and a config snippet |
 | `init` | create the repository for an account (encrypted when `encryption.recipients` is set) |
 | `backup [--full]` | one backup run → snapshot. Exit 2 if it stopped partway (snapshot marked partial). `--full` lists every folder in full |
-| `snapshots` | list snapshots (id, time, counts, pinned/flagged) |
+| `snapshots [--all]` | list snapshots (id, time, counts, pinned/flagged); `--all` includes forgotten ones |
 | `ls <snapshot> [folder]` | folders, or messages in a folder (date, from, size, hash). No bodies |
 | `show <hash>` | headers of one message. `--raw` writes the .eml to stdout |
 | `diff <a> <b>` | added / deleted / moved / re-flagged / renumbered counts per folder; `latest~N` accepted; no private key needed (folders show as `#id` without one) |
 | `pin` / `unpin <snapshot>` | protect a snapshot from retention |
 | `alerts`, `ack <id>` | guard alerts |
-| `forget`, `prune` | retention (`--dry-run`) |
+| `forget`, `prune` | retention (`--dry-run`, `--json`); prune is refused while an alert is unacknowledged |
 | `restore` | see above |
 | `check [--read-data] [--decrypt]` | index consistency. `--read-data` verifies every object (no key needed). `--decrypt` decrypts and re-hashes everything (needs the private key) |
 | `doctor` | connect, print server capabilities (CONDSTORE, QRESYNC, OBJECTID, SPECIAL-USE) and folder sizes |
@@ -367,8 +378,25 @@ deletion. The guard looks at one run against the previous snapshot, so a slow dr
 the thresholds is not caught; retention's grace period (M5) is what protects against that. `unpin` refuses while an
 unacknowledged alert owns the pin, and `ack`/`pin` take the exclusive lock, so they fail at once while a backup runs.
 
-**M5 Retention.** `forget` + `prune` with policy, grace period, pins, alert lock, dry-run, index backups.
+**M5 Retention (done).** `forget` + `prune` with policy, grace period, pins, alert lock, dry-run, index backups.
 *Done when* `plan.Retain` is exhaustively table-tested and prune on a fixture repo frees exactly the expected blobs.
+*Findings:* no schema change and no `format_version` bump (`snapshots.forgotten` was in the M1 schema). Two pure
+functions carry the decisions: `plan.Retain` (restic buckets; pinned and the latest snapshot always kept; an all-zero
+policy is an error; randomised tests check that pinned and latest survive, that raising a `keep_*` never forgets more,
+and that applying the policy twice changes nothing) and `plan.Prune` (an entry goes when it was closed before the
+grace cutoff and no kept snapshot lies in `from <= S < to`; a blob goes when every entry referencing it goes; an entry
+closed exactly at the cutoff is kept). **A forgotten snapshot is removed when it stops being complete, not when it is
+forgotten**: if all its messages are still on the server it stays under `--all`, and `ls 2` still shows exactly what
+the server had then. A pinned snapshot that was forgotten before it was pinned counts as kept. `index.ApplyPrune`
+re-checks every claim in SQL and rolls everything back on a surprise, so a bug in the plan cannot drop a referenced
+blob; a dry run runs the same transaction and rolls it back, which is why it takes the exclusive lock (not a shared
+one) and why its counts equal the real run's. `forget` runs while alerts are unacknowledged (it only marks);
+`prune` and its dry run refuse. Index backups (`VACUUM INTO` into `tmp/`, fsync, rename, keep 7) are written after
+every backup run and after a prune that changed the index, never after an idle prune, which would push useful copies
+out. A failed index backup is a warning, not a failed run. **An index copy older than the last prune can reference
+objects prune deleted, and backup trusts the index (it does not re-download a message whose blob row exists), so
+those stay missing**: use the newest copy and run `check`. The guard's "slow drip" gap (M4) is what the grace period
+covers. The itests backdate `runs.started_at` in `index.db` from the test, because the product has no clock hook.
 
 **M6 Restore.** Snapshot / folder / message / `--deleted-since`, `--into` and `--in-place`, `--to` another account,
 idempotency, dry-run. *Done when* the M4 "hack" itest ends with the mailbox restored and a second
@@ -388,9 +416,10 @@ restore appends nothing.
 
 ## Open questions
 
-- **Index durability.** SQLite + nightly `VACUUM INTO` copies is the v1 answer. Should runs also write
-  an append-only journal into `objects/` so the index can be rebuilt from the repository alone? That's
-  safer, but prune gets more complex. Decide before M5.
+- **Index durability.** *Decided in M5: no journal in v1.* SQLite plus a `VACUUM INTO` copy after every backup
+  (newest 7 kept) is the answer; the limit is documented in the README (an index copy older than the last prune can
+  reference deleted objects). A journal that rebuilds the index from the repository alone would make prune more
+  complex; revisit if someone loses an index.
 - **Gmail.** Labels show up as folders, so blobs dedupe for free. Should we default-exclude `[Gmail]/All Mail`,
   or back up only All Mail plus `X-GM-LABELS`? Not needed for Fastmail; decide when someone asks.
 - **Shared code with quietbox** (config, password sources, IMAP dialing): copy now, extract a module once both are stable.

@@ -11,7 +11,7 @@ An open-source IMAP backup tool: point-in-time **snapshots** of a mailbox in a l
 repository, a grace period for deleted mail, mass-deletion alerts, and restore of any
 snapshot, folder or message back to an IMAP server.
 
-**Status: pre-alpha (M4, mass-deletion guard).** `init`, `keygen`, `backup`, `snapshots`, `ls`, `show`, `diff`, `alerts`, `ack`, `pin`, `unpin`, `doctor` and `check` work. There is no restore or retention yet. See [docs/PLAN.md](docs/PLAN.md).
+**Status: pre-alpha (M5, retention).** `init`, `keygen`, `backup`, `snapshots`, `ls`, `show`, `diff`, `alerts`, `ack`, `pin`, `unpin`, `forget`, `prune`, `doctor` and `check` work. There is no restore yet. See [docs/PLAN.md](docs/PLAN.md).
 
 ## Develop
 
@@ -34,7 +34,7 @@ imapvault keygen --out ~/.config/imapvault/personal.key   # age key pair; prints
 imapvault --account personal init              # create the repository at repository.path
 imapvault --account personal doctor            # server capabilities, folders, and what would be backed up
 imapvault --account personal backup            # read-only run -> a new snapshot (--full: list every folder in full)
-imapvault --account personal snapshots         # list snapshots
+imapvault --account personal snapshots         # list snapshots (--all: forgotten ones too)
 imapvault --account personal ls latest         # folders in a snapshot ("latest" or a number)
 imapvault --account personal ls latest INBOX   # messages in a folder: UID, flags, size, date, sender, subject, hash
 imapvault --account personal show 3f9a1c2b     # one message by hash prefix; --raw writes the original .eml to stdout
@@ -42,6 +42,10 @@ imapvault --account personal diff latest~1 latest   # per folder: added, deleted
 imapvault --account personal alerts            # guard alerts nobody acknowledged yet (--all: every alert)
 imapvault --account personal ack 1             # acknowledge alert 1 (--all: every open alert)
 imapvault --account personal pin latest~1      # protect a snapshot from retention; unpin undoes it
+imapvault --account personal forget --dry-run  # which snapshots the [retention] policy would forget
+imapvault --account personal forget            # mark them forgotten (deletes nothing)
+imapvault --account personal prune --dry-run   # what prune would remove, with sizes
+imapvault --account personal prune             # remove what nothing needs and the grace period no longer holds
 imapvault --account personal check             # index + object presence; exit 1 on errors
 imapvault --account personal check --read-data # verify every object (no private key needed)
 imapvault --account personal check --decrypt   # decrypt and re-hash everything (needs the key)
@@ -52,8 +56,7 @@ different account. `init` and `check` do not need the IMAP password; `backup` an
 
 `backup` never changes the mailbox: folders are opened with `EXAMINE` and messages fetched with `BODY.PEEK[]`.
 A message already stored is not downloaded again, even when it moved to another folder, its folder was renamed or
-UIDVALIDITY changed. A deleted message stays in the repository (and in older snapshots); only `prune` (not written
-yet) removes data. Consistency is per folder, because IMAP has no atomic view of a whole account.
+UIDVALIDITY changed. A deleted message stays in the repository (and in older snapshots); only `prune` removes data. Consistency is per folder, because IMAP has no atomic view of a whole account.
 
 **Incremental runs.** After the first run only what changed is read. A folder the server reports as unchanged
 (same UIDVALIDITY, UIDNEXT, message count and mod-sequence) costs one `EXAMINE`. With CONDSTORE, new mail is found
@@ -84,7 +87,7 @@ When it trips, in one transaction with the snapshot: the new snapshot is **flagg
 and an alert is recorded (sealed, in an encrypted repository). Then `guard.on_alert` runs, and `backup` exits `3`.
 The next run compares with the flagged snapshot, so the same loss does not alert twice. `alerts` lists what happened,
 `diff <pinned> <flagged>` shows which folders lost mail, and `ack <id>` acknowledges it. Until it is acknowledged,
-`prune` (not written yet) refuses to run and the pinned snapshot cannot be unpinned.
+`prune` refuses to run and the pinned snapshot cannot be unpinned.
 
 ```toml
 [guard]
@@ -105,6 +108,43 @@ spread over many runs is not caught.
 **Server footprint.** On a server that does not track mod-sequences until a client asks (dovecot does this), the
 first `EXAMINE (CONDSTORE)` makes it start tracking them for that mailbox. No message or flag changes, but it is
 more than a plain `EXAMINE`.
+
+## Retention: forget and prune
+
+```toml
+[retention]
+keep_last    = 3
+keep_hourly  = 24
+keep_daily   = 14
+keep_weekly  = 8
+keep_monthly = 24
+keep_yearly  = 10
+deleted_grace = "180d"   # mail gone from the server stays restorable at least this long
+```
+
+`forget` applies the policy with restic's semantics (a `keep_*` of `0` switches that rule off; hours, days, ISO weeks,
+months and years are counted in the local time zone) and marks the snapshots it does not keep as **forgotten**. It
+deletes nothing. Pinned snapshots and the latest snapshot are always kept, and a policy that keeps nothing is refused
+rather than read as "forget everything". A forgotten snapshot disappears from `snapshots` (`--all` shows it), but stays
+addressable by number in `ls`, `show` and `diff` until `prune` removes what it showed.
+
+`prune` is the only command that removes data. It removes a closed index entry (a message that was deleted from the
+server) when **both** hold: it was deleted longer ago than `deleted_grace`, and no kept snapshot (not forgotten, or
+pinned) shows it. Then the message files nothing references any more, forgotten snapshots that are no longer
+complete, folders nothing shows, and object files and `tmp/` leftovers that an interrupted run left behind. A
+forgotten snapshot whose messages are all still on the server is still complete, so it stays until one of them goes.
+`prune` refuses to run while a guard alert is unacknowledged. The index is committed before any file is deleted, so
+an interruption leaves orphan files that the next prune removes, never a dangling reference. `--dry-run` takes the
+same lock, runs the same checks, and rolls the index change back: its numbers are what a real run removes. Neither
+`forget` nor `prune` needs the private key, and both fail at once while a backup is running.
+
+**Index backups.** After every `backup` (and after a `prune` that changed something) imapvault writes a consistent
+copy of `index.db` to `index-backups/` and keeps the newest 7. They are plain SQLite files with the sealed columns
+copied as they are. If `index.db` is lost or damaged, stop everything, move it aside, and copy the newest file from
+`index-backups/` to `index.db`, then run `check --read-data`. A copy older than the last prune may reference
+messages that prune deleted; `check` reports them as missing objects, and `backup` does not download them again
+(it trusts the index), so prefer the newest copy. There is no journal that could rebuild the index from the objects
+alone; keep the whole repository in your own backup too.
 
 ## Encryption
 
