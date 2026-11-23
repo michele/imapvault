@@ -165,7 +165,11 @@ func TestBackupMatchesServer(t *testing.T) {
 			before := serverState(t, c)
 			modseq := map[string]uint64{}
 			for name := range before {
-				sel, err := c.Select(name, &imap.SelectOptions{ReadOnly: true}).Wait()
+				// With CondStore: a server reports no HIGHESTMODSEQ (0) for a mailbox until
+				// some client turns CONDSTORE on. The backup does (EXAMINE (CONDSTORE)),
+				// so the baseline must be taken with it on too, or the first read would
+				// differ from the second for that reason alone.
+				sel, err := c.Select(name, &imap.SelectOptions{ReadOnly: true, CondStore: true}).Wait()
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -198,7 +202,7 @@ func TestBackupMatchesServer(t *testing.T) {
 						t.Errorf("%s uid %d: flags %q -> %q during backup", name, msgs[i].UID, msgs[i].Flags, after[name][i].Flags)
 					}
 				}
-				sel, _ := c.Select(name, &imap.SelectOptions{ReadOnly: true}).Wait()
+				sel, _ := c.Select(name, &imap.SelectOptions{ReadOnly: true, CondStore: true}).Wait()
 				if sel.HighestModSeq != modseq[name] {
 					t.Errorf("%s: HIGHESTMODSEQ %d -> %d: backup wrote to the mailbox", name, modseq[name], sel.HighestModSeq)
 				}

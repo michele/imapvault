@@ -28,5 +28,5 @@ seed:
 	go run ./tools/seed --addr 127.0.0.1:1143 --user me@imapvault.test --dir testdata/seed
 
 itest: itest-up seed
-	IMAPVAULT_IMAP_PASSWORD=test go test -tags integration -race -count=1 ./... ; \
+	IMAPVAULT_IMAP_PASSWORD=test go test -tags integration -race -count=1 -p 1 ./... ; \
 	status=$$?; $(MAKE) itest-down; exit $$status
