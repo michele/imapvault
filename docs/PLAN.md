@@ -444,8 +444,23 @@ not notice through the container's port forward, so the 10-connection limit star
 All itests pass against dovecot, including the "undo the hack" run and every no-approval path leaving the server's folder list,
 UIDNEXT, UIDVALIDITY and counts unchanged.
 
-**M7 Release prep.** README, example configs, systemd timer + cron docs, Dockerfile, goreleaser
-(reuse quietbox's setup), first test against real Fastmail (read-only backup only), v0.1.0.
+**M7 Release prep (done).** README install and quick start, example configs (incl. `backup-only.toml`), systemd units and
+timers, cron/launchd notes, Dockerfile, goreleaser, `install.sh`, SECURITY.md, first real-Fastmail read-only backup, v0.1.0.
+*Done when* a tagged release installs from brew, `install.sh` or the image and a backup runs unattended.
+*Findings:* v0.1.0 freezes `format_version` 2 / index schema 1. Release plumbing is copied from quietbox: goreleaser builds
+linux and darwin for amd64 and arm64 into a **draft** release (plus a Homebrew formula in `michele/homebrew-imapvault`),
+`docker.yml` pushes a multi-arch distroless image to ghcr.io, and `docs/RELEASING.md` has the one-time token setup. The image has no
+default command (one-shot tool) and sets `XDG_CONFIG_HOME=/config`. Config validation refuses `tls = "none"` for a non-loopback host,
+so the container itest shares dovecot's network namespace instead of using its service name. Units run `backup` as `Type=oneshot`
+with no `SuccessExitStatus`, so exit 2 (partial) and 3 (alert) show as failed on purpose; the repository lock makes overlapping runs
+fail fast, so no external `flock` is needed. A scheduled machine holds public keys only. Verified here: `systemd-analyze verify` on
+systemd 257 (not run as live services), the container's init/backup/second backup (all folders unchanged)/check against dovecot,
+the goreleaser snapshot archives, and `install.sh` (good, tampered and missing checksum) against local archives. **Not verified:** the
+release and docker workflows, the Homebrew publish, `install.sh` against real GitHub, NFS/SMB `flock`. **Real Fastmail (read-only
+backup, run by the maintainer, reported "fine", outputs not recorded):** `doctor` reports CONDSTORE, QRESYNC, OBJECTID, SPECIAL-USE and
+UIDPLUS. Fastmail has OBJECTID, but go-imap v2.0.0-beta.9 cannot request EMAILID, so a moved message is still downloaded again there
+(the M3 skip is unit-tested with a fake only); this is the first thing to fix once the library or raw commands allow it. Restore has
+not been run against Fastmail.
 
 ## Testing
 

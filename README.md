@@ -12,8 +12,7 @@ repository, a grace period for deleted mail, mass-deletion alerts, and restore o
 snapshot, folder or message back to an IMAP server.
 
 **Status: alpha, heading for v0.1.0.** From v0.1.0 the on-disk format is frozen: a later change to it ships a migration or a
-clear refusal. Everything is tested against a dovecot test server; a read-only backup of a real Fastmail mailbox is the last check
-before the tag. Restore has only been run against the test server: try it on a throwaway account first (see [Restore](#restore)).
+clear refusal. Everything is tested against a dovecot test server, and a read-only backup has run against a real Fastmail mailbox. Restore has only been run against the test server: try it on a throwaway account first (see [Restore](#restore)).
 Design and decisions: [docs/PLAN.md](docs/PLAN.md).
 
 ## Install
