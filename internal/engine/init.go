@@ -29,7 +29,7 @@ func accountOf(cfg *config.Config) repo.Account {
 // Init creates the repository at cfg.Repository.Path and its empty index. It
 // never contacts the server, so it needs no password.
 func Init(cfg *config.Config) (*InitResult, error) {
-	r, err := repo.Init(cfg.Repository.Path, accountOf(cfg))
+	r, err := repo.Init(cfg.Repository.Path, accountOf(cfg), repo.Encryption{})
 	if err != nil {
 		return nil, err
 	}

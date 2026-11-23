@@ -13,7 +13,7 @@ import (
 
 func newRepo(t *testing.T) *Repo {
 	t.Helper()
-	r, err := Init(filepath.Join(t.TempDir(), "repo"), acct)
+	r, err := Init(filepath.Join(t.TempDir(), "repo"), acct, Encryption{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/michele/imapvault/internal/repo"
 )
 
 // setupAccount writes <XDG_CONFIG_HOME>/imapvault/test.toml pointing at a fresh
@@ -83,7 +85,7 @@ func TestInitJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("not json: %v\n%s", err, out)
 	}
-	if got["path"] != repoPath || got["format_version"] != float64(1) {
+	if got["path"] != repoPath || got["format_version"] != float64(repo.FormatVersion) {
 		t.Fatalf("json: %v", got)
 	}
 }

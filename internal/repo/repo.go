@@ -27,7 +27,10 @@ import (
 // FormatVersion is the on-disk format this binary reads and writes. Any change
 // to the layout, the blob envelope or the index schema bumps it and ships a
 // migration, or a clear refusal to open the old or new repository.
-const FormatVersion = 1
+//
+// History: 1 was the pre-release layout (plaintext index, no encryption); there
+// is no migration, such a repository is refused and must be re-created.
+const FormatVersion = 2
 
 const metaFile = "repo.toml"
 
@@ -57,12 +60,56 @@ type Account struct {
 	Username string `toml:"username"`
 }
 
+// Encryption records how a repository is encrypted. It is fixed at init: repo.toml
+// is the source of truth for the recipients, and backup refuses a config whose
+// recipients differ. Canary is a small age-encrypted value (base64) with the
+// SHA-256 of its plaintext (hex), so a wrong private key is reported as such
+// instead of as corruption. The zero value means a plain repository.
+type Encryption struct {
+	Enabled      bool     `toml:"enabled"`
+	Recipients   []string `toml:"recipients,omitempty"`
+	Canary       string   `toml:"canary,omitempty"`
+	CanarySHA256 string   `toml:"canary_sha256,omitempty"`
+}
+
 // Meta is the content of repo.toml.
 type Meta struct {
 	FormatVersion int       `toml:"format_version"`
 	ID            string    `toml:"id"`
 	CreatedAt     time.Time `toml:"created_at"`
-	Account       Account   `toml:"account"`
+	// FolderKey (hex, 32 bytes) keys the folder-name HMAC. It lives in the
+	// repository on purpose: a key kept elsewhere that got lost would make every
+	// folder look new.
+	FolderKey  string     `toml:"folder_key"`
+	Account    Account    `toml:"account"`
+	Encryption Encryption `toml:"encryption"`
+}
+
+// FolderKey returns the decoded folder-name HMAC key.
+func (r *Repo) FolderKey() ([]byte, error) { return decodeFolderKey(r.Meta.FolderKey) }
+
+func decodeFolderKey(s string) ([]byte, error) {
+	k, err := hex.DecodeString(s)
+	if err != nil || len(k) != 32 {
+		return nil, errors.New("repo.toml: folder_key must be 64 hex characters")
+	}
+	return k, nil
+}
+
+func (e Encryption) validate() error {
+	if !e.Enabled {
+		return nil
+	}
+	if len(e.Recipients) == 0 {
+		return errors.New("repo.toml: encryption is enabled but lists no recipients")
+	}
+	if e.Canary == "" {
+		return errors.New("repo.toml: encryption is enabled but has no canary")
+	}
+	if h, err := hex.DecodeString(e.CanarySHA256); err != nil || len(h) != 32 {
+		return errors.New("repo.toml: encryption.canary_sha256 must be 64 hex characters")
+	}
+	return nil
 }
 
 // Repo is an opened repository directory.
@@ -83,9 +130,10 @@ func (r *Repo) IndexPath() string { return filepath.Join(r.Path, "index.db") }
 // IndexBackupsDir holds VACUUM INTO copies of the index.
 func (r *Repo) IndexBackupsDir() string { return filepath.Join(r.Path, "index-backups") }
 
-// Init creates a new repository at path, bound to acct. The path must be
-// absolute and either missing or an empty directory.
-func Init(path string, acct Account) (*Repo, error) {
+// Init creates a new repository at path, bound to acct, with the given
+// encryption (the zero value is a plain repository). The path must be absolute
+// and either missing or an empty directory.
+func Init(path string, acct Account, enc Encryption) (*Repo, error) {
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("repository path %q must be absolute", path)
 	}
@@ -102,15 +150,24 @@ func Init(path string, acct Account) (*Repo, error) {
 		}
 	}
 
+	if err := enc.validate(); err != nil {
+		return nil, err
+	}
 	var id [16]byte
+	var folderKey [32]byte
 	if _, err := rand.Read(id[:]); err != nil {
+		return nil, err
+	}
+	if _, err := rand.Read(folderKey[:]); err != nil {
 		return nil, err
 	}
 	r := &Repo{Path: path, Meta: Meta{
 		FormatVersion: FormatVersion,
 		ID:            hex.EncodeToString(id[:]),
 		CreatedAt:     time.Now().UTC().Truncate(time.Second),
+		FolderKey:     hex.EncodeToString(folderKey[:]),
 		Account:       acct,
+		Encryption:    enc,
 	}}
 	for _, d := range []string{r.Path, r.ObjectsDir(), r.TmpDir(), r.IndexBackupsDir()} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
@@ -144,8 +201,14 @@ func Open(path string, acct *Account) (*Repo, error) {
 		return nil, fmt.Errorf("%w: repository is format %d, this imapvault reads format %d (created by a newer imapvault; upgrade)",
 			ErrFormatVersion, m.FormatVersion, FormatVersion)
 	case m.FormatVersion != FormatVersion:
-		return nil, fmt.Errorf("%w: repository is format %d, this imapvault reads format %d (no migration available)",
+		return nil, fmt.Errorf("%w: repository is format %d, this imapvault reads format %d (a pre-release format with no migration; re-create it with init)",
 			ErrFormatVersion, m.FormatVersion, FormatVersion)
+	}
+	if _, err := decodeFolderKey(m.FolderKey); err != nil {
+		return nil, err
+	}
+	if err := m.Encryption.validate(); err != nil {
+		return nil, err
 	}
 	if acct != nil && m.Account.ID != acct.ID {
 		return nil, fmt.Errorf("%w: repository is bound to %s, config is %s", ErrWrongAccount, m.Account.ID, acct.ID)
