@@ -31,6 +31,14 @@ const FormatVersion = 1
 
 const metaFile = "repo.toml"
 
+// layoutNames are the entries imapvault itself creates in a repository. A
+// directory holding only these and no repo.toml is the leftover of an
+// interrupted init and may be initialised again; anything else is refused.
+var layoutNames = map[string]bool{
+	"objects": true, "tmp": true, "index-backups": true,
+	"index.db": true, "index.db-wal": true, "index.db-shm": true, "lock": true,
+}
+
 var (
 	// ErrNotARepo means the directory has no repo.toml.
 	ErrNotARepo = errors.New("not an imapvault repository")
@@ -84,10 +92,14 @@ func Init(path string, acct Account) (*Repo, error) {
 	if _, err := os.Stat(filepath.Join(path, metaFile)); err == nil {
 		return nil, fmt.Errorf("%w: %s", ErrExists, path)
 	}
-	if ents, err := os.ReadDir(path); err == nil && len(ents) > 0 {
-		return nil, fmt.Errorf("directory %s is not empty; refusing to initialise a repository there", path)
-	} else if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	ents, err := os.ReadDir(path)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
+	}
+	for _, e := range ents {
+		if !layoutNames[e.Name()] {
+			return nil, fmt.Errorf("directory %s is not empty; refusing to initialise a repository there", path)
+		}
 	}
 
 	var id [16]byte
@@ -139,6 +151,17 @@ func Open(path string, acct *Account) (*Repo, error) {
 		return nil, fmt.Errorf("%w: repository is bound to %s, config is %s", ErrWrongAccount, m.Account.ID, acct.ID)
 	}
 	return &Repo{Path: path, Meta: m}, nil
+}
+
+// Uninit removes repo.toml, so the directory stops being a repository and can be
+// initialised again. Init callers use it to back out when a later setup step
+// (creating the index) fails. It never touches objects or the index.
+func (r *Repo) Uninit() error {
+	err := os.Remove(filepath.Join(r.Path, metaFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 // writeMeta writes repo.toml atomically: temp file, fsync, rename, fsync dir.

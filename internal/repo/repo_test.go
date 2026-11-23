@@ -59,6 +59,34 @@ func TestInitAllowsExistingEmptyDirAndRefusesSecondInit(t *testing.T) {
 	}
 }
 
+func TestInitReusesLeftoverLayoutOfInterruptedInit(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "repo")
+	r, err := Init(dir, acct)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// an interrupted init is one that never got repo.toml (or whose caller backed it out).
+	if err := r.Uninit(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(dir, nil); !errors.Is(err, ErrNotARepo) {
+		t.Fatalf("after Uninit: want ErrNotARepo, got %v", err)
+	}
+	if _, err := Init(dir, acct); err != nil {
+		t.Fatalf("re-init over leftover layout: %v", err)
+	}
+}
+
+func TestInitStillRefusesForeignFilesNextToLayout(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "repo")
+	r, _ := Init(dir, acct)
+	_ = r.Uninit()
+	_ = os.WriteFile(filepath.Join(dir, "holiday-photos.zip"), []byte("x"), 0o600)
+	if _, err := Init(dir, acct); err == nil || !strings.Contains(err.Error(), "not empty") {
+		t.Fatalf("want not-empty refusal, got %v", err)
+	}
+}
+
 func TestInitRequiresAbsolutePath(t *testing.T) {
 	if _, err := Init("relative/repo", acct); err == nil {
 		t.Fatal("relative path accepted")
