@@ -11,23 +11,45 @@ An open-source IMAP backup tool: point-in-time **snapshots** of a mailbox in a l
 repository, a grace period for deleted mail, mass-deletion alerts, and restore of any
 snapshot, folder or message back to an IMAP server.
 
-**Status: pre-alpha (M6, restore).** `init`, `keygen`, `backup`, `snapshots`, `ls`, `show`, `diff`, `alerts`, `ack`, `pin`, `unpin`, `forget`, `prune`, `restore`, `doctor` and `check` work. See [docs/PLAN.md](docs/PLAN.md).
+**Status: alpha, heading for v0.1.0.** From v0.1.0 the on-disk format is frozen: a later change to it ships a migration or a
+clear refusal. Everything is tested against a dovecot test server; a read-only backup of a real Fastmail mailbox is the last check
+before the tag. Restore has only been run against the test server: try it on a throwaway account first (see [Restore](#restore)).
+Design and decisions: [docs/PLAN.md](docs/PLAN.md).
 
-## Develop
+## Install
 
 ```sh
-make test     # go test ./... -race
-make lint     # go vet + golangci-lint
-make itest    # integration tests against the dovecot server in docker-compose.test.yml
-make build    # static binary in ./bin
+brew install michele/imapvault/imapvault                       # macOS, Linux
+curl -fsSL https://raw.githubusercontent.com/michele/imapvault/main/install.sh | sh   # into ~/.local/bin, checksum verified
+docker pull ghcr.io/michele/imapvault                          # see docs/DOCKER.md
 ```
+
+Or take the tarball for your platform (linux and macOS, amd64 and arm64) from the
+[releases page](https://github.com/michele/imapvault/releases): one static binary, plus the examples and the
+systemd units. `imapvault --version` confirms it. Windows is not supported.
+
+## Quick start
+
+```sh
+imapvault keygen --out ~/.config/imapvault/personal.key      # prints the public key (the "recipient")
+$EDITOR ~/.config/imapvault/personal.toml                    # start from examples/fastmail.toml; set recipients
+imapvault --account personal init                            # once; encryption cannot be added later
+imapvault --account personal doctor                          # connects, shows capabilities and what would be backed up
+imapvault --account personal backup                          # the first run can take hours; resumable
+imapvault --account personal snapshots
+```
+
+Then run `backup` on a schedule (systemd timer, cron or a container: [docs/SCHEDULING.md](docs/SCHEDULING.md),
+[docs/DOCKER.md](docs/DOCKER.md)) and `forget` + `prune` weekly. A machine that only runs the schedule needs
+the public keys only ([examples/backup-only.toml](examples/backup-only.toml)); keep the private key where you
+read or restore mail, and keep a second, offline recovery key. Exit code `3` means the guard saw a mass deletion.
 
 ## Configuration
 
 One TOML file per account in `$XDG_CONFIG_HOME/imapvault/<account>.toml`, selected with
 `--account NAME`. See [examples/](examples/). `imapvault accounts` lists them.
 
-## Usage so far
+## Commands
 
 ```sh
 imapvault keygen --out ~/.config/imapvault/personal.key   # age key pair; prints the public key
@@ -225,3 +247,14 @@ encrypted. A cron job or NAS that holds only the public keys can run backups and
 key is needed only to read mail (`ls`, `show`, restore, `check --decrypt`). `backup` never reads it, and `snapshots` does not need it. Without any private key the data cannot be
 recovered, so back it up. What stays readable, what an attacker with the repository still learns, and how to
 recover a message with the stock `age` and `zstd` tools are in [docs/PLAN.md](docs/PLAN.md#encryption).
+
+## Develop
+
+```sh
+make test     # go test ./... -race
+make lint     # go vet + golangci-lint
+make itest    # integration tests against the dovecot server in docker-compose.test.yml
+make build    # static binary in ./bin
+make release-snapshot   # release archives in ./dist, published nowhere (see docs/RELEASING.md)
+make docker-build       # container image imapvault:local
+```
