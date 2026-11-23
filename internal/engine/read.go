@@ -109,12 +109,19 @@ func (rd *reader) snapshotID(spec string) (int64, error) {
 		if err != nil || n < 0 {
 			return 0, fmt.Errorf("snapshot %q: expected latest~N with N a number (latest~1 is the one before the latest)", spec)
 		}
-		snaps, err := rd.db.Snapshots()
+		all, err := rd.db.Snapshots()
 		if err != nil {
 			return 0, err
 		}
+		// Forgotten snapshots are skipped: latest~N counts the ones `snapshots` lists.
+		var snaps []index.Snapshot
+		for _, s := range all {
+			if !s.Forgotten {
+				snaps = append(snaps, s)
+			}
+		}
 		if n >= len(snaps) {
-			return 0, fmt.Errorf("snapshot %q does not exist: the repository has %d snapshot(s)", spec, len(snaps))
+			return 0, fmt.Errorf("snapshot %q does not exist: the repository has %d snapshot(s) that are not forgotten", spec, len(snaps))
 		}
 		return snaps[len(snaps)-1-n].ID, nil
 	}
@@ -143,9 +150,10 @@ type SnapshotInfo struct {
 	Forgotten bool      `json:"forgotten"`
 }
 
-// Snapshots lists snapshots, oldest first. It reads no sealed value, so it needs
-// no private key.
-func Snapshots(ctx context.Context, cfg *config.Config) ([]SnapshotInfo, error) {
+// Snapshots lists snapshots, oldest first. Forgotten snapshots, which stay
+// addressable by number until prune removes what they showed, are listed only
+// with all. It reads no sealed value, so it needs no private key.
+func Snapshots(ctx context.Context, cfg *config.Config, all bool) ([]SnapshotInfo, error) {
 	rd, err := openReader(ctx, cfg, false)
 	if err != nil {
 		return nil, err
@@ -155,9 +163,12 @@ func Snapshots(ctx context.Context, cfg *config.Config) ([]SnapshotInfo, error) 
 	if err != nil {
 		return nil, err
 	}
-	out := make([]SnapshotInfo, len(snaps))
-	for i, s := range snaps {
-		out[i] = SnapshotInfo{ID: s.ID, CreatedAt: s.CreatedAt, Folders: s.Folders, Messages: s.Messages, Pinned: s.Pinned, Flagged: s.Flagged, Forgotten: s.Forgotten}
+	out := make([]SnapshotInfo, 0, len(snaps))
+	for _, s := range snaps {
+		if s.Forgotten && !all {
+			continue
+		}
+		out = append(out, SnapshotInfo{ID: s.ID, CreatedAt: s.CreatedAt, Folders: s.Folders, Messages: s.Messages, Pinned: s.Pinned, Flagged: s.Flagged, Forgotten: s.Forgotten})
 	}
 	return out, nil
 }

@@ -22,7 +22,7 @@ columns, so an encrypted repository needs no private key here.`,
 			if err != nil {
 				return err
 			}
-			snaps, err := engine.Snapshots(cmd.Context(), cfg)
+			snaps, err := engine.Snapshots(cmd.Context(), cfg, false)
 			if err != nil {
 				return err
 			}

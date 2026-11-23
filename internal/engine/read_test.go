@@ -16,7 +16,7 @@ func TestSnapshotsListsRunsWithoutAKey(t *testing.T) {
 	runBackup(t, cfg, fakeMailbox())
 	runBackup(t, cfg, fakeMailbox())
 	// no identity configured at all: `snapshots` must not need one.
-	snaps, err := Snapshots(context.Background(), cfg)
+	snaps, err := Snapshots(context.Background(), cfg, false)
 	if err != nil || len(snaps) != 2 || snaps[1].Messages != 3 || snaps[1].Folders != 2 || snaps[0].Pinned {
 		t.Fatalf("%+v err %v", snaps, err)
 	}

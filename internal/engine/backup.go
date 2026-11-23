@@ -167,6 +167,11 @@ func Backup(ctx context.Context, cfg *config.Config, src mail.Source, opts Backu
 	}
 	b.rep.Snapshot = run
 	b.rep.Status = status
+	// The snapshot is committed; a copy of the index is a safety net, so a failure
+	// here is a warning and never a failed run.
+	if _, err := writeIndexBackup(r, db, fmt.Sprintf("r%d", run), opts.Now()); err != nil {
+		b.warn("index backup: %v", err)
+	}
 	if alert != nil {
 		id, err := db.LastAlertID(run)
 		if err != nil {
