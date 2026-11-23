@@ -4,10 +4,13 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/spf13/cobra"
 )
@@ -51,12 +54,17 @@ func newRootCmd() *cobra.Command {
 		opts.stderr = cmd.ErrOrStderr()
 		return nil
 	}
-	root.AddCommand(newAccountsCmd(opts), newInitCmd(opts), newCheckCmd(opts), newKeygenCmd(opts), newVersionCmd())
+	root.AddCommand(newAccountsCmd(opts), newInitCmd(opts), newCheckCmd(opts), newKeygenCmd(opts),
+		newBackupCmd(opts), newSnapshotsCmd(opts), newLsCmd(opts), newShowCmd(opts), newDoctorCmd(opts), newVersionCmd())
 	return root
 }
 
 func main() {
-	if err := newRootCmd().Execute(); err != nil {
+	// Ctrl-C and SIGTERM cancel the context, so a running backup ends as a failed
+	// run (no snapshot) instead of being killed mid-folder.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := newRootCmd().ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
