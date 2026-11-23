@@ -424,3 +424,22 @@ func (db *DB) BlobsByPrefix(prefix string, limit int) ([]BlobRow, error) {
 	}
 	return out, rows.Err()
 }
+
+// SnapshotFolderCounts returns the number of messages per folder id at snapshot run.
+func (db *DB) SnapshotFolderCounts(run int64) (map[int64]int, error) {
+	rows, err := db.Query(`SELECT e.folder_id, count(*) FROM entries e WHERE `+entryInSnapshot+` GROUP BY e.folder_id`, run)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[int64]int{}
+	for rows.Next() {
+		var id int64
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}
