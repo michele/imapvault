@@ -43,7 +43,7 @@ func newRootCmd() *cobra.Command {
 	}
 	root.SetVersionTemplate("imapvault {{.Version}}\n")
 	root.PersistentFlags().StringVar(&opts.configPath, "config", defaultConfigPath(), "path to the TOML config file")
-	root.PersistentFlags().StringVar(&opts.account, "account", "", "use <config folder>/NAME.toml (see "imapvault accounts")")
+	root.PersistentFlags().StringVar(&opts.account, "account", "", "use <config folder>/NAME.toml (see the accounts command)")
 	root.PersistentFlags().BoolVarP(&opts.verbose, "verbose", "v", false, "print progress to stderr (never message content or credentials)")
 	root.PersistentFlags().BoolVar(&opts.json, "json", false, "machine-readable output on list commands")
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
