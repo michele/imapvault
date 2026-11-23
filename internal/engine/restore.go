@@ -83,6 +83,12 @@ type RestorePreview struct {
 	Warnings    []string
 }
 
+// Approve returns the approved plan if token is this plan's token. It is the only
+// way the CLI can obtain what ApplyRestore accepts.
+func (p *RestorePreview) Approve(token string) (plan.ApprovedRestore, error) {
+	return plan.Approve(p.Plan, token)
+}
+
 func targetOf(cfg *config.Config) plan.RestoreTarget {
 	return plan.RestoreTarget{Host: cfg.IMAP.Host, Port: cfg.IMAP.Port, Username: cfg.IMAP.Username}
 }
