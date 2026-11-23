@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/emersion/go-imap/v2 v2.0.0-beta.9
+	github.com/klauspost/compress v1.20.5
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/spf13/cobra v1.10.2
 )
