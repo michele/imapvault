@@ -369,7 +369,11 @@ const folderInSnapshot = `f.first_seen_run <= ?1 AND (f.gone_run IS NULL OR f.go
 // snapshot, atomically, computing the snapshot's counts from the entries. A run
 // is either a snapshot or it isn't. A partial run's snapshot is what the index
 // holds at that moment: folders the run did not reach keep their previous entries.
-func (db *DB) CompleteRun(run int64, status string, now time.Time) error {
+//
+// With a non-nil alert the same transaction also marks the new snapshot flagged,
+// pins alert.PinSnapshot and records the alert, so a crash can never leave a
+// flagged snapshot without its alert, or the other way round.
+func (db *DB) CompleteRun(run int64, status string, now time.Time, alert *NewAlert) error {
 	if status != RunComplete && status != RunPartial {
 		return fmt.Errorf("a run cannot be completed with status %q", status)
 	}
@@ -386,6 +390,11 @@ func (db *DB) CompleteRun(run int64, status string, now time.Time) error {
 		  (SELECT count(*) FROM folders f WHERE `+folderInSnapshot+`),
 		  (SELECT count(*) FROM entries e WHERE `+entryInSnapshot+`)`, run, ts(now)); err != nil {
 		return err
+	}
+	if alert != nil {
+		if err := recordAlert(tx, run, now, *alert); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

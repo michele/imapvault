@@ -33,7 +33,7 @@ func newFolder(t *testing.T, db *DB, run int64, name string) int64 {
 
 func finish(t *testing.T, db *DB, run int64) {
 	t.Helper()
-	if err := db.CompleteRun(run, RunComplete, t0); err != nil {
+	if err := db.CompleteRun(run, RunComplete, t0, nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -284,16 +284,16 @@ func TestOpenEntriesSpanGenerations(t *testing.T) {
 func TestCompletePartialRun(t *testing.T) {
 	db, _ := openTemp(t)
 	r1 := newRun(t, db)
-	if err := db.CompleteRun(r1, RunFailed, t0); err == nil {
+	if err := db.CompleteRun(r1, RunFailed, t0, nil); err == nil {
 		t.Fatal("a run was completed as failed")
 	}
-	if err := db.CompleteRun(r1, "bogus", t0); err == nil {
+	if err := db.CompleteRun(r1, "bogus", t0, nil); err == nil {
 		t.Fatal("a run was completed with an unknown status")
 	}
 	if snaps, _ := db.Snapshots(); len(snaps) != 0 {
 		t.Fatalf("a rejected completion wrote a snapshot: %+v", snaps)
 	}
-	if err := db.CompleteRun(r1, RunPartial, t0); err != nil {
+	if err := db.CompleteRun(r1, RunPartial, t0, nil); err != nil {
 		t.Fatal(err)
 	}
 	snaps, _ := db.Snapshots()
@@ -423,5 +423,117 @@ func TestFoldersInEither(t *testing.T) {
 	fs, err := db.FoldersInEither(r1, r2)
 	if err != nil || len(fs) != 2 || fs[0].ID != old || fs[1].ID != renamed {
 		t.Fatalf("folders %+v err %v", fs, err)
+	}
+}
+
+func snapRow(t *testing.T, db *DB, id int64) Snapshot {
+	t.Helper()
+	snaps, err := db.Snapshots()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range snaps {
+		if s.ID == id {
+			return s
+		}
+	}
+	t.Fatalf("no snapshot %d", id)
+	return Snapshot{}
+}
+
+func TestCompleteRunWithAlertIsAtomic(t *testing.T) {
+	db, _ := openTemp(t)
+	r1 := newRun(t, db)
+	finish(t, db, r1)
+
+	r2 := newRun(t, db)
+	if err := db.CompleteRun(r2, RunComplete, t0, &NewAlert{Kind: "mass-deletion", SummarySealed: []byte("s"), PinSnapshot: r1}); err != nil {
+		t.Fatal(err)
+	}
+	if s := snapRow(t, db, r2); !s.Flagged || s.Pinned {
+		t.Errorf("new snapshot: flagged=%v pinned=%v, want flagged and not pinned", s.Flagged, s.Pinned)
+	}
+	if s := snapRow(t, db, r1); !s.Pinned || s.Flagged {
+		t.Errorf("previous snapshot: pinned=%v flagged=%v, want pinned and not flagged", s.Pinned, s.Flagged)
+	}
+	alerts, err := db.Alerts(false)
+	if err != nil || len(alerts) != 1 {
+		t.Fatalf("alerts %v err %v", alerts, err)
+	}
+	if a := alerts[0]; a.RunID != r2 || a.Kind != "mass-deletion" || a.PinnedSnapshot != r1 || a.Acknowledged() {
+		t.Errorf("alert = %+v", a)
+	}
+
+	// A pin target that does not exist fails the whole completion: no snapshot,
+	// no flag, no alert.
+	r3 := newRun(t, db)
+	if err := db.CompleteRun(r3, RunComplete, t0, &NewAlert{Kind: "x", SummarySealed: []byte("s"), PinSnapshot: 999}); err == nil {
+		t.Fatal("expected an error for a missing pin target")
+	}
+	if ok, _ := db.HasSnapshot(r3); ok {
+		t.Error("the snapshot survived a failed alert")
+	}
+	if all, _ := db.Alerts(true); len(all) != 1 {
+		t.Errorf("alerts = %d, want 1", len(all))
+	}
+}
+
+func TestAckAndPins(t *testing.T) {
+	db, _ := openTemp(t)
+	r1 := newRun(t, db)
+	finish(t, db, r1)
+	r2 := newRun(t, db)
+	if err := db.CompleteRun(r2, RunComplete, t0, &NewAlert{Kind: "mass-deletion", SummarySealed: []byte("s"), PinSnapshot: r1}); err != nil {
+		t.Fatal(err)
+	}
+	id, err := db.LastAlertID(r2)
+	if err != nil || id == 0 {
+		t.Fatalf("alert id %d err %v", id, err)
+	}
+	if n, _ := db.UnackedAlertCount(); n != 1 {
+		t.Fatalf("unacked = %d", n)
+	}
+	if got, ok, _ := db.PinnedByUnackedAlert(r1); !ok || got != id {
+		t.Errorf("PinnedByUnackedAlert(r1) = %d, %v", got, ok)
+	}
+	if _, ok, _ := db.PinnedByUnackedAlert(r2); ok {
+		t.Error("the flagged snapshot itself is not pinned by the alert")
+	}
+
+	if err := db.AckAlerts([]int64{id, 999}, t0); err == nil {
+		t.Fatal("an unknown id must fail")
+	}
+	if n, _ := db.UnackedAlertCount(); n != 1 {
+		t.Fatal("a failed ack must acknowledge nothing")
+	}
+	later := t0.Add(time.Hour)
+	if err := db.AckAlerts([]int64{id}, t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AckAlerts([]int64{id}, later); err != nil {
+		t.Fatalf("acknowledging twice must be a no-op: %v", err)
+	}
+	all, _ := db.Alerts(true)
+	if len(all) != 1 || !all[0].Acknowledged() || !all[0].AcknowledgedAt.Equal(t0) {
+		t.Errorf("alerts after ack = %+v", all)
+	}
+	if open, _ := db.Alerts(false); len(open) != 0 {
+		t.Errorf("unacknowledged = %+v", open)
+	}
+	if _, ok, _ := db.PinnedByUnackedAlert(r1); ok {
+		t.Error("an acknowledged alert no longer protects the pin")
+	}
+
+	if err := db.SetPinned(r1, false); err != nil {
+		t.Fatal(err)
+	}
+	if snapRow(t, db, r1).Pinned {
+		t.Error("still pinned")
+	}
+	if err := db.SetPinned(r1, true); err != nil || !snapRow(t, db, r1).Pinned {
+		t.Errorf("pin failed: %v", err)
+	}
+	if err := db.SetPinned(999, true); err == nil {
+		t.Error("pinning a missing snapshot must fail")
 	}
 }

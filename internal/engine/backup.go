@@ -145,7 +145,7 @@ func Backup(ctx context.Context, cfg *config.Config, src mail.Source, opts Backu
 	if b.partial {
 		status = index.RunPartial
 	}
-	if err := db.CompleteRun(run, status, opts.Now()); err != nil {
+	if err := db.CompleteRun(run, status, opts.Now(), nil); err != nil {
 		_ = db.FinishRun(run, index.RunFailed, opts.Now())
 		return nil, err
 	}
