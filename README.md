@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
+    <img src="assets/banner-light.svg" alt="imapvault: snapshots and point-in-time restore for IMAP mail" width="720">
+  </picture>
+</p>
+
 # imapvault
 
 An open-source IMAP backup tool: point-in-time **snapshots** of a mailbox in a local
