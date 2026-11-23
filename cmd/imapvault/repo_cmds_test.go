@@ -12,7 +12,10 @@ import (
 
 // setupAccount writes <XDG_CONFIG_HOME>/imapvault/test.toml pointing at a fresh
 // repository path and returns that path.
-func setupAccount(t *testing.T) string {
+func setupAccount(t *testing.T) string { return setupAccountWith(t, "") }
+
+// setupAccountWith appends extra (more TOML tables) to the account config.
+func setupAccountWith(t *testing.T, extra string) string {
 	t.Helper()
 	cfgHome := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfgHome)
@@ -21,7 +24,7 @@ func setupAccount(t *testing.T) string {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	body := "[imap]\nhost = \"imap.example.com\"\nusername = \"me@example.com\"\n\n[repository]\npath = \"" + repoPath + "\"\n"
+	body := "[imap]\nhost = \"imap.example.com\"\nusername = \"me@example.com\"\n\n[repository]\npath = \"" + repoPath + "\"\n" + extra
 	if err := os.WriteFile(filepath.Join(dir, "test.toml"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
