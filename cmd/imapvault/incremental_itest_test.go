@@ -60,6 +60,22 @@ func backupJSON(t *testing.T, args ...string) engine.BackupReport {
 	return rep
 }
 
+// backupJSONAlerted runs a backup that must end with a guard alert (exit 3) and
+// returns its report.
+func backupJSONAlerted(t *testing.T) engine.BackupReport {
+	t.Helper()
+	out, err := execRoot(t, "--account", "it", "--json", "backup")
+	var ec *exitCodeError
+	if !errors.As(err, &ec) || ec.code != exitAlert {
+		t.Fatalf("expected exit code %d, got %v\n%s", exitAlert, err, out)
+	}
+	var rep engine.BackupReport
+	if err := json.Unmarshal([]byte(out), &rep); err != nil {
+		t.Fatal(err)
+	}
+	return rep
+}
+
 func modeIn(t *testing.T, rep engine.BackupReport, folder string) string {
 	t.Helper()
 	for _, f := range rep.Folders {
@@ -125,7 +141,7 @@ func TestIncrementalModesAgainstServer(t *testing.T) {
 	folder := uniq("itest-modes")
 	createFolder(t, c, folder)
 	appendN(t, c, folder, "base", 3)
-	itestAccount(t, include(folder))
+	itestAccount(t, include(folder)+guardThresholdsOff)
 	run(t, "init")
 
 	r1 := backupJSON(t)
@@ -261,7 +277,7 @@ func TestUIDValidityResetAndFolderDeleteAgainstServer(t *testing.T) {
 	folder := uniq("itest-reset")
 	createFolder(t, c, folder)
 	appendN(t, c, folder, "old", 3)
-	itestAccount(t, include(folder))
+	itestAccount(t, include(folder)+guardThresholdsOff)
 	run(t, "init")
 
 	r1 := backupJSON(t)
@@ -298,9 +314,11 @@ func TestUIDValidityResetAndFolderDeleteAgainstServer(t *testing.T) {
 	if err := c.Delete(folder).Wait(); err != nil {
 		t.Fatal(err)
 	}
-	r4 := backupJSON(t)
-	if r4.GoneFolders != 1 || r4.Messages != 0 {
-		t.Fatalf("folder delete %+v", r4)
+	// A folder that vanished with mail in it trips the guard even though the
+	// thresholds are off: that rule has no switch.
+	r4 := backupJSONAlerted(t)
+	if r4.GoneFolders != 1 || r4.Messages != 0 || r4.Alert == nil || r4.Alert.Kind != "folder-vanished" {
+		t.Fatalf("folder delete %+v alert %+v", r4, r4.Alert)
 	}
 	requireLsMatches(t, fmt.Sprint(r4.Snapshot), map[string][]serverMsg{})
 	requireLsMatches(t, fmt.Sprint(r2.Snapshot), state2)

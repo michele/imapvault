@@ -39,6 +39,11 @@ func itestAccount(t *testing.T, extra string) string {
 	return repoPath
 }
 
+// guardThresholdsOff is for tests that delete a large share of a tiny folder on
+// purpose and are not about the guard: with both thresholds at 0 only the
+// vanished-folder rule is left.
+const guardThresholdsOff = "\n[guard]\nmax_deleted_percent = 0\nmax_deleted_count = 0\n"
+
 func run(t *testing.T, args ...string) string {
 	t.Helper()
 	out, err := execRoot(t, append([]string{"--account", "it"}, args...)...)
@@ -291,7 +296,7 @@ func TestRescanSeesChangesAndKeepsHistory(t *testing.T) {
 		appendMsg(t, c, folder, s)
 	}
 
-	itestAccount(t, "\n[folders]\ninclude = [\""+folder+"\"]\n")
+	itestAccount(t, "\n[folders]\ninclude = [\""+folder+"\"]\n"+guardThresholdsOff)
 	run(t, "init")
 	var rep1 engine.BackupReport
 	if err := json.Unmarshal([]byte(run(t, "--json", "backup")), &rep1); err != nil {
@@ -335,11 +340,9 @@ func TestRescanSeesChangesAndKeepsHistory(t *testing.T) {
 	if err := c.Delete(folder).Wait(); err != nil {
 		t.Fatal(err)
 	}
-	var rep3 engine.BackupReport
-	if err := json.Unmarshal([]byte(run(t, "--json", "backup")), &rep3); err != nil {
-		t.Fatal(err)
-	}
-	if rep3.GoneFolders != 1 || rep3.Messages != 0 {
+	// ... and since it took three messages with it, the guard says so (exit 3).
+	rep3 := backupJSONAlerted(t)
+	if rep3.GoneFolders != 1 || rep3.Messages != 0 || rep3.Alert == nil || rep3.Alert.Kind != "folder-vanished" {
 		t.Fatalf("report %+v", rep3)
 	}
 	requireLsMatches(t, "3", map[string][]serverMsg{})
