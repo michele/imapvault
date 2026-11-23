@@ -99,33 +99,54 @@ func inContainer(getenv func(string) string, exists func(string) bool) bool {
 }
 
 func readPasswordFile(path, baseDir string, d passwordDeps) (password string, warnings []string, err error) {
+	data, warnings, err := readSecretFile(passwordKind, path, baseDir, d)
+	if err != nil {
+		return "", nil, err
+	}
+	password, err = singleLine(string(data), "imap.password_file "+path)
+	return password, warnings, err
+}
+
+// secretKind names a secret source in error messages, so the password and the
+// age identity share one reader without sharing wording.
+type secretKind struct {
+	fileKey string // config key of the file option, e.g. "imap.password_file"
+	cmdKey  string // config key of the command option
+	noun    string // "password file", "identity file"
+}
+
+var passwordKind = secretKind{"imap.password_file", "imap.password_command", "password file"}
+
+// readSecretFile reads a secret file: ~ and $VAR expanded, a regular file, and
+// not readable by group or others except inside a container (a warning then).
+// The content is returned raw; callers decide what shape it must have.
+func readSecretFile(k secretKind, path, baseDir string, d passwordDeps) (data []byte, warnings []string, err error) {
 	path, err = expandPath(path, baseDir, d.getenv)
 	if err != nil {
-		return "", nil, fmt.Errorf("imap.password_file: %w", err)
+		return nil, nil, fmt.Errorf("%s: %w", k.fileKey, err)
 	}
 	info, err := d.stat(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return "", nil, fmt.Errorf("imap.password_file %s: no such file", path)
+			return nil, nil, fmt.Errorf("%s %s: no such file", k.fileKey, path)
 		}
-		return "", nil, fmt.Errorf("imap.password_file %s: %w", path, err)
+		return nil, nil, fmt.Errorf("%s %s: %w", k.fileKey, path, err)
 	}
 	if info.IsDir() || !info.Mode().IsRegular() {
-		return "", nil, fmt.Errorf("imap.password_file %s is not a regular file", path)
+		return nil, nil, fmt.Errorf("%s %s is not a regular file", k.fileKey, path)
 	}
 	if info.Mode().Perm()&0o077 != 0 {
-		msg := fmt.Sprintf("password file %s is readable by other users (mode %04o)", path, info.Mode().Perm())
+		msg := fmt.Sprintf("%s %s is readable by other users (mode %04o)", k.noun, path, info.Mode().Perm())
 		if !inContainer(d.getenv, d.exists) {
-			return "", nil, fmt.Errorf("%s: run `chmod 600 %s`", msg, path)
+			return nil, nil, fmt.Errorf("%s: run `chmod 600 %s`", msg, path)
 		}
 		warnings = append(warnings, msg+"; fine for a mounted container secret, not elsewhere")
 	}
-	data, err := d.readFile(path)
+	data, err = d.readFile(path)
 	if err != nil {
-		return "", nil, fmt.Errorf("imap.password_file %s: %w", path, err)
+		return nil, nil, fmt.Errorf("%s %s: %w", k.fileKey, path, err)
 	}
-	password, err = singleLine(string(data), "imap.password_file "+path)
-	return password, warnings, err
+	return data, warnings, nil
 }
 
 // expandPath expands ~/ and $VAR / ${VAR} (an unset variable is an error, so a
@@ -170,12 +191,22 @@ func singleLine(raw, what string) (string, error) {
 }
 
 func runPasswordCommand(ctx context.Context, command string, d passwordDeps) (string, error) {
+	out, err := runSecretCommand(ctx, passwordKind, command, d)
+	if err != nil {
+		return "", err
+	}
+	return singleLine(string(out), "the output of imap.password_command")
+}
+
+// runSecretCommand runs a shell command that prints a secret, with a timeout.
+// Errors carry a truncated stderr and never stdout, which is the secret.
+func runSecretCommand(ctx context.Context, k secretKind, command string, d passwordDeps) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, d.commandTimeout)
 	defer cancel()
 	stdout, stderr, err := d.run(ctx, command)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return "", fmt.Errorf("imap.password_command timed out after %s", d.commandTimeout)
+			return nil, fmt.Errorf("%s timed out after %s", k.cmdKey, d.commandTimeout)
 		}
 		msg := strings.TrimSpace(string(stderr))
 		if len(msg) > 300 {
@@ -184,9 +215,9 @@ func runPasswordCommand(ctx context.Context, command string, d passwordDeps) (st
 		if msg != "" {
 			msg = ": " + msg
 		}
-		return "", fmt.Errorf("imap.password_command failed (%v)%s", err, msg)
+		return nil, fmt.Errorf("%s failed (%v)%s", k.cmdKey, err, msg)
 	}
-	return singleLine(string(stdout), "the output of imap.password_command")
+	return stdout, nil
 }
 
 // limitWriter keeps at most max bytes but never blocks the writer.
