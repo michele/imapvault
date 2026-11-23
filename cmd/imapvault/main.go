@@ -72,7 +72,7 @@ func newRootCmd() *cobra.Command {
 		return nil
 	}
 	root.AddCommand(newAccountsCmd(opts), newInitCmd(opts), newCheckCmd(opts), newKeygenCmd(opts),
-		newBackupCmd(opts), newAlertsCmd(opts), newAckCmd(opts), newPinCmd(opts, true), newPinCmd(opts, false), newSnapshotsCmd(opts), newLsCmd(opts), newShowCmd(opts), newDiffCmd(opts), newDoctorCmd(opts), newVersionCmd())
+		newBackupCmd(opts), newAlertsCmd(opts), newAckCmd(opts), newPinCmd(opts, true), newPinCmd(opts, false), newForgetCmd(opts), newPruneCmd(opts), newSnapshotsCmd(opts), newLsCmd(opts), newShowCmd(opts), newDiffCmd(opts), newDoctorCmd(opts), newVersionCmd())
 	return root
 }
 

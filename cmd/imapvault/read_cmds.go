@@ -11,18 +11,21 @@ import (
 )
 
 func newSnapshotsCmd(opts *options) *cobra.Command {
-	return &cobra.Command{
+	var all bool
+	cmd := &cobra.Command{
 		Use:   "snapshots",
 		Short: "List snapshots",
-		Long: `Lists the snapshots in the repository, oldest first. It reads only plaintext
-columns, so an encrypted repository needs no private key here.`,
+		Long: `Lists the snapshots in the repository, oldest first. Snapshots that forget marked as
+forgotten are hidden, although they stay addressable by number until prune removes what
+they showed; --all lists them too. It reads only plaintext columns, so an encrypted
+repository needs no private key here.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := loadOfflineConfig(opts)
 			if err != nil {
 				return err
 			}
-			snaps, err := engine.Snapshots(cmd.Context(), cfg, false)
+			snaps, err := engine.Snapshots(cmd.Context(), cfg, all)
 			if err != nil {
 				return err
 			}
@@ -55,6 +58,8 @@ columns, so an encrypted repository needs no private key here.`,
 			return tw.Flush()
 		},
 	}
+	cmd.Flags().BoolVar(&all, "all", false, "also list forgotten snapshots")
+	return cmd
 }
 
 func newLsCmd(opts *options) *cobra.Command {
