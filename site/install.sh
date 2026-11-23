@@ -1,7 +1,7 @@
 #!/bin/sh
-# imapvault installer: https://github.com/michele/imapvault
+# imapvault installer: https://imapvault.sh
 #
-#   curl -fsSL https://raw.githubusercontent.com/michele/imapvault/main/install.sh | sh
+#   curl -fsSL https://imapvault.sh/install.sh | sh
 #
 # Downloads the release archive for this machine from GitHub, checks it against
 # the published checksums.txt, and installs the imapvault binary.
@@ -87,7 +87,7 @@ main() {
     say "macOS: the binary is not signed. If Gatekeeper blocks it, run:"
     say "  xattr -d com.apple.quarantine $dir/imapvault"
   fi
-  say "Next: imapvault --version, then see https://github.com/michele/imapvault#quick-start"
+  say "Next: imapvault --version, then see https://imapvault.sh"
 }
 
 main "$@"

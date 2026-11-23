@@ -462,6 +462,16 @@ UIDPLUS. Fastmail has OBJECTID, but go-imap v2.0.0-beta.9 cannot request EMAILID
 (the M3 skip is unit-tested with a fake only); this is the first thing to fix once the library or raw commands allow it. Restore has
 not been run against Fastmail.
 
+**M8 Site (built, not deployed).** `site/`: one static page for `imapvault.sh` (inline CSS, no JavaScript, same structure as
+quietbox's, navy and amber palette from `assets/`, light and dark), favicons, `og.png`, and `site/install.sh`, now the only copy of the
+installer (the repo-root one moved; nothing had published its raw URL). The README install line and the Homebrew `homepage` point at
+`imapvault.sh`. Hosting is Cloudflare Pages from `site/` with no build step (setup in `docs/RELEASING.md`).
+*Verified:* the page in headless Chrome at 1100 px in dark and light, and at 390 px in light with no page-level overflow (code blocks
+scroll inside their box); served content types from a local server; `install.sh` is unchanged apart from its URLs, and its good and
+tampered-checksum cases passed earlier against local archives. *Not verified:* the page at 390 px in dark, other browsers, the
+Cloudflare project and DNS, and that the live `https://imapvault.sh/install.sh` serves the script. Until that project exists and the
+v0.1.0 draft is published, the README's install command fails.
+
 ## Testing
 
 - Unit: `plan` (sync diff, guard, retention) as table tests. Blob store and index with temp dirs.

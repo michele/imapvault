@@ -19,7 +19,7 @@ Design and decisions: [docs/PLAN.md](docs/PLAN.md).
 
 ```sh
 brew install michele/imapvault/imapvault                       # macOS, Linux
-curl -fsSL https://raw.githubusercontent.com/michele/imapvault/main/install.sh | sh   # into ~/.local/bin, checksum verified
+curl -fsSL https://imapvault.sh/install.sh | sh   # into ~/.local/bin, checksum verified
 docker pull ghcr.io/michele/imapvault                          # see docs/DOCKER.md
 ```
 

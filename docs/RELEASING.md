@@ -28,6 +28,10 @@ index schema bumps `format_version` and ships a migration (or a clear refusal). 
   4. Set an expiry and note the date: when it lapses, the release still succeeds up to the formula step, then fails.
   5. Add it to this repository as an Actions secret named `HOMEBREW_TAP_GITHUB_TOKEN`
      (`gh secret set HOMEBREW_TAP_GITHUB_TOKEN`).
+- Site (Cloudflare Pages, domain `imapvault.sh`): create a Pages project from this repository with production
+  branch `main`, **no build command** and output directory `site`, then add `imapvault.sh` as its custom domain.
+  `site/install.sh` is the only copy of the installer, so `https://imapvault.sh/install.sh` serves it; check that
+  the response is not an HTML page and that `curl -fsSL https://imapvault.sh/install.sh | head -1` prints `#!/bin/sh`.
 - The first image push creates the ghcr package as private; make it public in the package settings.
 
 ## Notes

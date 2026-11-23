@@ -70,7 +70,7 @@ brews:
       name: homebrew-imapvault
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     url_template: "https://github.com/michele/imapvault/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
-    homepage: https://github.com/michele/imapvault
+    homepage: https://imapvault.sh
     description: "IMAP backup with point-in-time snapshots, mass-deletion alerts and restore"
     license: MIT
     test: |
