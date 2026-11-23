@@ -1,0 +1,19 @@
+# The same backup as a *user* service, for a laptop or a box where you have no root.
+# Install as ~/.config/systemd/user/imapvault-backup@.service (and the .timer next to it), then:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now imapvault-backup@fastmail.timer
+#   loginctl enable-linger "$USER"      # keep timers running when you are logged out
+# The account's config is ~/.config/imapvault/<name>.toml (imapvault's own default for --account).
+# Run `imapvault --account <name> init` once first. See docs/SCHEDULING.md.
+[Unit]
+Description=imapvault backup (%i)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/imapvault --account %i backup
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=yes
+Environment=GOMEMLIMIT=400MiB

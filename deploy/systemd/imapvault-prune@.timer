@@ -1,0 +1,11 @@
+# Weekly retention for one account: `systemctl enable --now imapvault-prune@fastmail.timer`.
+[Unit]
+Description=imapvault retention timer (%i)
+
+[Timer]
+OnCalendar=Sun 04:00
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

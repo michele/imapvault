@@ -1,0 +1,65 @@
+# imapvault: one backup run for the account named by the instance (`imapvault-backup@fastmail`).
+#   /usr/local/bin/imapvault --config /etc/imapvault/fastmail.toml backup
+# Started by imapvault-backup@.timer. Install and set-up steps: docs/SCHEDULING.md.
+#
+# This unit holds no private key. Leave `identity_file` out of the config on this machine:
+# backup never reads it (an encrypted repository can be backed up with the public keys alone).
+[Unit]
+Description=imapvault backup (%i)
+Documentation=https://github.com/michele/imapvault/blob/main/docs/SCHEDULING.md
+Wants=network-online.target
+After=network-online.target
+# Stay down until `imapvault init` has created the repository (docs/SCHEDULING.md, "First run").
+# The path must match [repository] path in /etc/imapvault/%i.toml.
+ConditionPathExists=/var/lib/imapvault/%i/repo.toml
+# Optional alert hook: create imapvault-alert@.service (see docs/SCHEDULING.md), then uncomment.
+# OnFailure=imapvault-alert@%i.service
+
+[Service]
+Type=oneshot
+User=imapvault
+Group=imapvault
+ExecStart=/usr/local/bin/imapvault --config /etc/imapvault/%i.toml backup
+# Exit codes: 0 ok, 1 error, 2 partial run, 3 guard alert. Anything but 0 shows the unit as failed on
+# purpose: a partial run or a mass-deletion alert should be noticed, not treated as success.
+# A backup only reads the mailbox; being killed mid-run is safe (the next run resumes).
+TimeoutStopSec=60s
+
+# Be gentle with the machine and the network: this is a background job.
+Nice=10
+IOSchedulingClass=idle
+CPUSchedulingPolicy=idle
+
+# The repository lives under /var/lib/imapvault, owned by the imapvault user.
+StateDirectory=imapvault
+StateDirectoryMode=0700
+UMask=0077
+
+# Hardening. imapvault talks to your IMAP server and writes its own repository.
+# If the repository is elsewhere (a NAS mount), add it to ReadWritePaths= in a drop-in.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# Go does not size its heap to a cgroup limit: keep it under MemoryMax.
+Environment=GOMEMLIMIT=400MiB
+MemoryMax=512M
+TasksMax=128

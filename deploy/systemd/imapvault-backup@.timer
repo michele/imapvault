@@ -1,0 +1,15 @@
+# Runs imapvault-backup@<account>.service every hour: `systemctl enable --now imapvault-backup@fastmail.timer`.
+# An unchanged mailbox costs one EXAMINE per folder, so hourly is cheap. A run that is still going
+# when the next one starts is not doubled: the repository lock refuses the second one.
+[Unit]
+Description=imapvault backup timer (%i)
+
+[Timer]
+OnCalendar=hourly
+# Spread the load on the server and the NAS.
+RandomizedDelaySec=5min
+# Run once at boot if the machine was off at the scheduled time.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,3 @@
+# Install as /etc/sysusers.d/imapvault.conf, then run `systemd-sysusers`.
+# The system user the imapvault-*@.service units run as.
+u imapvault - "imapvault mail backup" /var/lib/imapvault

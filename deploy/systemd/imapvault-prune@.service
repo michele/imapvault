@@ -1,0 +1,50 @@
+# imapvault: apply the retention policy for one account, weekly (see imapvault-prune@.timer).
+#   forget  marks snapshots the [retention] policy does not keep (deletes nothing)
+#   prune   removes what no kept snapshot shows and the deleted_grace period no longer holds
+# `prune` refuses to run while a guard alert is unacknowledged, so the unit fails until you
+# look at `imapvault alerts` and run `imapvault ack`. That is intended.
+# Neither command needs the private key.
+[Unit]
+Description=imapvault forget and prune (%i)
+Documentation=https://github.com/michele/imapvault/blob/main/docs/SCHEDULING.md
+ConditionPathExists=/var/lib/imapvault/%i/repo.toml
+
+[Service]
+Type=oneshot
+User=imapvault
+Group=imapvault
+ExecStart=/usr/local/bin/imapvault --config /etc/imapvault/%i.toml forget
+ExecStart=/usr/local/bin/imapvault --config /etc/imapvault/%i.toml prune
+Nice=10
+IOSchedulingClass=idle
+CPUSchedulingPolicy=idle
+StateDirectory=imapvault
+StateDirectoryMode=0700
+UMask=0077
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+Environment=GOMEMLIMIT=400MiB
+MemoryMax=512M
+TasksMax=128
