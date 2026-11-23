@@ -248,18 +248,32 @@ not cancelled by Ctrl-C. A failing hook is a warning: the alert is already recor
 ## Restore
 
 ```sh
-imapvault restore --snapshot latest|<id>|2026-11-20T10:00 \
-  [--folder INBOX] [--message <sha-prefix>] [--deleted-since 7d] \
-  [--to <other-account>] [--into "Restored/{snapshot}"] [--in-place] [--dry-run]
+imapvault restore --snapshot latest|<id>|latest~N|2026-11-20T10:00 | --deleted-since 7d \
+  [--folder INBOX] [--message <sha-prefix>] \
+  [--to <other-account>] [--into "Restored/{snapshot}"] [--in-place] [--dry-run] [--confirm TOKEN]
 ```
 
-- Default target: same account, under `Restored/<snapshot>/<original folder>`. `--in-place` puts
-  messages back into their original folders (creating them if missing).
-- `APPEND` with the original flags and INTERNALDATE.
-- Idempotent: before appending, check the target folder for the same Message-ID + size
-  (or EMAILID) and skip duplicates. Re-running a restore must not create copies.
-- `--deleted-since` restores only messages whose entries closed within the window. This is the
-  "undo the hack" command.
+Restore is the only command that writes to a server, and the server is the source of truth, so writing is gated:
+
+1. **Preview first.** Without approval restore only prints a preview: target `user@host` (with a DIFFERENT ACCOUNT banner
+   when it is not the repository's account), folders to create, existing folders it would append into, message and byte
+   counts, how many are skipped as already present, and "Nothing is deleted, moved or re-flagged on the server."
+2. **Plan token.** The preview ends with a token, a hash of the whole plan (target, source, mode, folders to create, every
+   append). At a terminal restore asks for the token to be typed; elsewhere it needs `--confirm TOKEN`. There is no `--yes`.
+   The plan is recomputed from the live server before writing, so a token that no longer matches (the target changed since the
+   preview) writes nothing and prints the new preview.
+3. **Config opt-in.** The target account's config needs `[restore] allow_append = true`; otherwise restore previews and refuses.
+4. **Fenced writer.** Only `internal/imaptarget` can send `CREATE`/`APPEND`, and its writer refuses any folder or count outside
+   the approved plan. Build-time tests keep go-imap and `imaptarget` imports out of every other package.
+
+- Default target: same account, under `Restored/<snapshot>/<original folder>`. `--in-place` appends into the original
+  folders (creating them if missing); the preview marks each existing folder. `--in-place` and `--into` are exclusive.
+- `APPEND` with the original flags (minus `\Recent` and `\Deleted`) and INTERNALDATE.
+- Idempotent: a message already in the target folder (Message-ID + size, or size + INTERNALDATE without a Message-ID) is skipped,
+  matches consumed one-for-one. A run with nothing to append prints "Nothing to restore".
+- `--deleted-since` restores messages whose last entry closed within the window and that exist nowhere on the server now. This is
+  the "undo the hack" command.
+- Needs the private key (it decrypts blobs and folder names). Writes nothing to the repository.
 
 ## Commands (v1)
 

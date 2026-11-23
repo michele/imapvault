@@ -38,6 +38,7 @@ internal/imapsource/  implementation of mail.Source using go-imap v2 (read-only 
 internal/repo/        repository on disk: layout, format version, lock, init/open
 internal/seal/        the only age importer: seal/open index values, blob encryption, folder-name HMAC, canary, keygen
 internal/objects/     content-addressed blob store: put/get/has/verify, atomic writes
+internal/imaptarget/  the only code allowed to write to a server (CREATE, APPEND), fenced to an approved restore plan
 internal/index/       SQLite schema, migrations, queries (folders, entries, snapshots, alerts)
 internal/plan/        PURE functions: (index state, server listing) -> sync plan; retention policy -> keep set;
                       guard thresholds -> alert. No I/O.
@@ -64,6 +65,13 @@ mass-deletion guard). Commands never touch the repository or the server directly
 8. **Backup never needs the private key.** The backup, prune and `check --read-data` paths must not resolve or
    use an identity. What they must read back is plaintext; everything descriptive is written sealed and read only
    by commands that hold the key. Never log or put into an error the bytes of an object or a decrypt failure.
+
+9. **No write to an IMAP server without an approved plan.** Only `internal/imaptarget` may send `CREATE` or `APPEND`,
+   and only `internal/engine/restore.go` may import it (a test enforces both, and that nothing else imports go-imap).
+   The writer is fenced to the approved plan: it refuses any folder or count the plan did not list. A plan is approved
+   by its token (`plan.Approve`), typed at a terminal or passed as `--confirm`; there is no `--yes`. The target
+   account's config must set `[restore] allow_append = true`. Restore never sends `STORE`, `EXPUNGE`, `MOVE`, `COPY`,
+   `DELETE` or `RENAME`, and strips `\Deleted` from appended flags.
 
 ## Identity model
 
