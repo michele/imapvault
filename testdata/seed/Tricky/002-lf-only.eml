@@ -1,0 +1,8 @@
+From: lf@example.test
+To: me@imapvault.test
+Subject: Bare LF line endings
+Date: Tue, 03 Mar 2026 09:00:00 +0000
+Message-ID: <lf-only@seed.imapvault.test>
+
+line one
+line two

@@ -1,0 +1,7 @@
+From: dup@example.test
+To: me@imapvault.test
+Subject: Same Message-ID, second
+Date: Wed, 04 Mar 2026 09:00:01 +0000
+Message-ID: <dup@seed.imapvault.test>
+
+different body

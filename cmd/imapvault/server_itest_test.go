@@ -74,7 +74,7 @@ func TestSeededFolders(t *testing.T) {
 			nested = name
 		}
 	}
-	want := map[string]int{"INBOX": 4, "Sent": 1, "Archive": 2, "Trash": 1}
+	want := map[string]int{"INBOX": 4, "Sent": 1, "Archive": 2, "Trash": 1, "Tricky": 4}
 	if nested == "" {
 		t.Error("nested folder Archive/2025 was not seeded")
 	} else {
