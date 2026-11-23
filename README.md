@@ -113,6 +113,22 @@ imapvault --account personal restore --message 3f9a1c2b --into "Recovered/{snaps
 imapvault --account personal restore --to newaccount       # another configured account (needs its own allow_append)
 ```
 
+**Size cap.** A restore that adds more than `--max-messages` (default 10000, `0` for no limit) is previewed
+and flagged but never written, even with a correct token: raise the cap to say you mean it. It is a second
+check against approving something far bigger than intended, such as the wrong `--snapshot`.
+
+**Try it on a throwaway account first.** Servers differ in small ways that decide whether a restore round-trips
+(how they treat custom flags, whether `CREATE` of a nested folder makes its parents, whether `RFC822.SIZE` matches
+the stored bytes, which duplicate detection relies on). Before pointing restore at a mailbox you care about, run it
+against a second, disposable account with `--to`, so the real mailbox is never the write target:
+
+1. `restore --to scratch --dry-run`, then a single message (`--folder X --message <hash>`) and approve it.
+2. Check the bytes, flags and date in a mail client, then run the same command again: it must say
+   "Nothing to restore". If it does not, duplicate detection does not work on that server; stop and report it.
+3. Only then restore a folder, and last `--in-place`.
+
+imapvault never deletes anything, so clean up the `Restored/...` folders yourself in your mail client.
+
 `--deleted-since` restores messages deleted from the server within the window that are on it nowhere
 now; a message moved to a folder excluded from the backup looks deleted to the backup and is included.
 

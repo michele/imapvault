@@ -253,7 +253,7 @@ not cancelled by Ctrl-C. A failing hook is a warning: the alert is already recor
 ```sh
 imapvault restore --snapshot latest|<id>|latest~N|2026-11-20T10:00 | --deleted-since 7d \
   [--folder INBOX] [--message <sha-prefix>] \
-  [--to <other-account>] [--into "Restored/{snapshot}"] [--in-place] [--dry-run] [--confirm TOKEN]
+  [--to <other-account>] [--into "Restored/{snapshot}"] [--in-place] [--max-messages N] [--dry-run] [--confirm TOKEN]
 ```
 
 Restore is the only command that writes to a server, and the server is the source of truth, so writing is gated:
@@ -266,7 +266,9 @@ Restore is the only command that writes to a server, and the server is the sourc
    The plan is recomputed from the live server before writing, so a token that no longer matches (the target changed since the
    preview) writes nothing and prints the new preview.
 3. **Config opt-in.** The target account's config needs `[restore] allow_append = true`; otherwise restore previews and refuses.
-4. **Fenced writer.** Only `internal/imaptarget` can send `CREATE`/`APPEND`, and its writer refuses any folder or count outside
+4. **Size cap.** `--max-messages` (default 10000, 0 for none): a plan that adds more is previewed, flagged and refused whatever
+   approved it, in the CLI and again in `ApplyRestore`.
+5. **Fenced writer.** Only `internal/imaptarget` can send `CREATE`/`APPEND`, and its writer refuses any folder or count outside
    the approved plan. Build-time tests keep go-imap and `imaptarget` imports out of every other package.
 
 - Default target: same account, under `Restored/<snapshot>/<original folder>`. `--in-place` appends into the original

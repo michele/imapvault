@@ -36,6 +36,9 @@ const DefaultRestorePrefix = "Restored/{snapshot}"
 // set [restore] allow_append.
 var ErrRestoreNotAllowed = errors.New(`writing to this account is not enabled: add "allow_append = true" under [restore] in its config`)
 
+// ErrOverLimit is returned by ApplyRestore for a plan larger than RestoreOptions.MaxMessages.
+var ErrOverLimit = errors.New("restore is over the message limit")
+
 // DialTarget connects to the target account. Nothing is changed by connecting;
 // writes need a plan.ApprovedRestore.
 func DialTarget(ctx context.Context, cfg *config.Config) (mail.Target, error) {
@@ -56,7 +59,11 @@ type RestoreOptions struct {
 	Message      string        // only the message with this SHA-256 prefix (at least 8 hex digits)
 	Into         string        // target folder prefix, "{snapshot}" is replaced; default DefaultRestorePrefix
 	InPlace      bool          // append into the original folders
-	Now          time.Time     // zero: time.Now()
+	// MaxMessages caps how many messages one restore may append (0: no cap). A
+	// plan over it is previewed but never applied: the token pins the exact plan,
+	// the cap is a second check against approving something far bigger than meant.
+	MaxMessages int
+	Now         time.Time // zero: time.Now()
 	// Log gets progress lines: folder names, hashes and counts, never message content.
 	Log func(format string, args ...any)
 }
@@ -80,6 +87,10 @@ type RestorePreview struct {
 	// still produced without it, so the user sees what would happen; applying is
 	// refused.
 	AllowAppend bool
+	// MaxMessages is the cap the plan was checked against (0: none); OverLimit
+	// is set when the plan appends more than that.
+	MaxMessages int
+	OverLimit   bool
 	Warnings    []string
 }
 
@@ -180,6 +191,8 @@ func PlanRestore(ctx context.Context, repoCfg, tgtCfg *config.Config, tgt mail.T
 		TargetAccount: tgtCfg.IMAP.Username + "@" + tgtCfg.IMAP.Host,
 		RepoAccount:   repoAcct.Username + "@" + repoAcct.Host,
 		AllowAppend:   tgtCfg.Restore.AllowAppend,
+		MaxMessages:   opts.MaxMessages,
+		OverLimit:     opts.MaxMessages > 0 && p.Appends > opts.MaxMessages,
 		Warnings:      append(rd.warnings, sel.warnings...),
 	}
 	prev.DifferentAccount = !strings.EqualFold(repoAcct.Host, tgtCfg.IMAP.Host) || repoAcct.Username != tgtCfg.IMAP.Username
@@ -209,6 +222,8 @@ func checkRestoreOptions(o RestoreOptions) error {
 		return errors.New("--deleted-since and --snapshot cannot be combined: pick one source")
 	case o.InPlace && o.Into != "":
 		return errors.New("--in-place and --into cannot be combined")
+	case o.MaxMessages < 0:
+		return errors.New("--max-messages must be 0 (no limit) or more")
 	case o.Message != "" && len(o.Message) < minHashPrefix:
 		return fmt.Errorf("a hash prefix needs at least %d hex characters (got %d)", minHashPrefix, len(o.Message))
 	}
@@ -383,6 +398,9 @@ func ApplyRestore(ctx context.Context, repoCfg, tgtCfg *config.Config, tgt mail.
 	}
 	if !tgtCfg.Restore.AllowAppend {
 		return res, ErrRestoreNotAllowed
+	}
+	if opts.MaxMessages > 0 && p.Appends > opts.MaxMessages {
+		return res, fmt.Errorf("%w: the plan adds %d messages, more than the limit of %d", ErrOverLimit, p.Appends, opts.MaxMessages)
 	}
 	if got := targetOf(tgtCfg); got != p.Target {
 		return res, fmt.Errorf("the plan was made for %s@%s:%d, not for this account", p.Target.Username, p.Target.Host, p.Target.Port)

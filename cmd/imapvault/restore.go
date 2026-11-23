@@ -40,6 +40,11 @@ func isTerminal(r io.Reader) bool {
 	return true
 }
 
+// defaultMaxMessages is the most one restore writes unless --max-messages raises
+// it: big enough for a real recovery of most mailboxes, small enough that
+// approving the wrong snapshot is noticed.
+const defaultMaxMessages = 10000
+
 type restoreFlags struct {
 	snapshot     string
 	deletedSince string
@@ -50,6 +55,7 @@ type restoreFlags struct {
 	inPlace      bool
 	dryRun       bool
 	confirm      string
+	maxMessages  int
 }
 
 func newRestoreCmd(opts *options) *cobra.Command {
@@ -88,6 +94,8 @@ original folders instead (creating any that are missing). --to ACCOUNT restores 
 another configured account, which needs its own allow_append.
 
 It needs the private key of an encrypted repository (it decrypts the messages).
+--max-messages (default 10000, 0 for none) refuses a plan that adds more, however
+it was approved, as a second check against restoring far more than you meant.
 --dry-run prints the preview and stops.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runRestore(cmd, opts, f) },
@@ -101,6 +109,7 @@ It needs the private key of an encrypted repository (it decrypts the messages).
 	fl.StringVar(&f.into, "into", "", `folder prefix to restore under (default "`+engine.DefaultRestorePrefix+`")`)
 	fl.BoolVar(&f.inPlace, "in-place", false, "append into the original folders instead of a Restored/ prefix")
 	fl.BoolVar(&f.dryRun, "dry-run", false, "print the preview and stop: nothing is written")
+	fl.IntVar(&f.maxMessages, "max-messages", defaultMaxMessages, "refuse to write a plan that adds more messages than this (0: no limit)")
 	fl.StringVar(&f.confirm, "confirm", "", "approve writing: the plan token from the preview")
 	return cmd
 }
@@ -137,6 +146,7 @@ func configPathOf(opts *options, account string) string {
 func runRestore(cmd *cobra.Command, opts *options, f *restoreFlags) error {
 	ro := engine.RestoreOptions{
 		Snapshot: f.snapshot, Folder: f.folder, Message: f.message, Into: f.into, InPlace: f.inPlace,
+		MaxMessages: f.maxMessages,
 	}
 	if f.deletedSince != "" {
 		d, err := config.ParseDuration(f.deletedSince)
@@ -188,12 +198,22 @@ func runRestore(cmd *cobra.Command, opts *options, f *restoreFlags) error {
 		if !prev.AllowAppend {
 			note += "\n" + notAllowedHint(opts, f.to, prev)
 		}
+		if prev.OverLimit {
+			note += "\n" + overLimitHint(prev)
+		}
 		return show(note)
 	case !prev.AllowAppend:
 		if err := show(""); err != nil {
 			return err
 		}
 		return errors.New(notAllowedHint(opts, f.to, prev) + "\nNothing was written.")
+	}
+
+	if prev.OverLimit {
+		if err := show(""); err != nil {
+			return err
+		}
+		return errors.New(overLimitHint(prev) + "\nNothing was written.")
 	}
 
 	token := strings.TrimSpace(f.confirm)
@@ -246,6 +266,11 @@ func runRestore(cmd *cobra.Command, opts *options, f *restoreFlags) error {
 	return nil
 }
 
+func overLimitHint(prev *engine.RestorePreview) string {
+	return fmt.Sprintf("This restore adds %d messages, more than --max-messages %d. If that is what you want, run it again with --max-messages %d (or 0 for no limit); otherwise narrow it with --folder, --message or --snapshot.",
+		prev.Plan.Appends, prev.MaxMessages, prev.Plan.Appends)
+}
+
 func notAllowedHint(opts *options, to string, prev *engine.RestorePreview) string {
 	account := opts.account
 	if to != "" {
@@ -288,6 +313,9 @@ func printRestorePreview(out io.Writer, prev *engine.RestorePreview) {
 	if p.DeletedFlagDropped > 0 {
 		_, _ = fmt.Fprintf(out, "  %s had the \\Deleted flag; it is not restored, so they will not be expunged later.\n", plural(p.DeletedFlagDropped, "message"))
 	}
+	if prev.OverLimit {
+		_, _ = fmt.Fprintf(out, "  ** OVER THE LIMIT: more than --max-messages %d, so this will not be written **\n", prev.MaxMessages)
+	}
 	_, _ = fmt.Fprintln(out, "  Nothing is deleted, moved, re-flagged or overwritten on the server.")
 	for _, w := range prev.Warnings {
 		_, _ = fmt.Fprintf(out, "  warning: %s\n", clean(w))
@@ -321,6 +349,7 @@ type restoreJSON struct {
 	Appends          int                 `json:"appends"`
 	Bytes            int64               `json:"bytes"`
 	Skipped          int                 `json:"skipped"`
+	OverLimit        bool                `json:"over_limit"`
 	AllowAppend      bool                `json:"allow_append"`
 	Token            string              `json:"token"`
 	Written          bool                `json:"written"`
@@ -333,7 +362,7 @@ func restoreJSONOf(prev *engine.RestorePreview, res *engine.RestoreResult, note 
 	j := restoreJSON{
 		Source: p.Source, Target: prev.TargetAccount, DifferentAccount: prev.DifferentAccount, InPlace: p.InPlace,
 		Prefix: p.Prefix, Folders: []restoreFolderJSON{}, Create: append([]string{}, p.Create...), Appends: p.Appends,
-		Bytes: p.Bytes, Skipped: p.Skipped, AllowAppend: prev.AllowAppend, Token: prev.Token, Note: note,
+		Bytes: p.Bytes, Skipped: p.Skipped, OverLimit: prev.OverLimit, AllowAppend: prev.AllowAppend, Token: prev.Token, Note: note,
 	}
 	for _, f := range p.Folders {
 		j.Folders = append(j.Folders, restoreFolderJSON{Name: f.Name, Exists: f.Exists, Existing: f.ExistingMessages, Add: len(f.Append), Skip: f.Skipped, Bytes: f.Bytes})

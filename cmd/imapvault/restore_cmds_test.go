@@ -293,3 +293,38 @@ func TestIsTerminal(t *testing.T) {
 		t.Fatal("a pipe is not a terminal")
 	}
 }
+
+func TestRestoreMaxMessages(t *testing.T) {
+	tgt := mailtest.NewTarget()
+	restoreSetup(t, allowAppend, tgt) // the plan adds 2 messages
+	base := []string{"--account", "test", "restore"}
+
+	dry, err := execRootIn(t, "", append(base, "--max-messages", "1", "--dry-run")...)
+	if err != nil || !strings.Contains(dry, "OVER THE LIMIT") || !strings.Contains(dry, "--max-messages 2") {
+		t.Fatalf("dry run: %v\n%s", err, dry)
+	}
+	tok := tokenOf(t, dry)
+
+	// A correct token does not get past the cap.
+	out, err := execRootIn(t, "", append(base, "--max-messages", "1", "--confirm", tok)...)
+	if err == nil || !strings.Contains(err.Error(), "more than --max-messages 1") || !strings.Contains(err.Error(), "Nothing was written") {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	noWrites(t, tgt)
+	if _, err := execRootIn(t, "", append(base, "--max-messages", "-3", "--dry-run")...); err == nil {
+		t.Fatal("a negative cap must fail")
+	}
+
+	// Raising it, or switching it off, lets the same plan through.
+	for _, max := range []string{"2", "0"} {
+		restoreSetup(t, allowAppend, mailtest.NewTarget())
+		out, err := execRootIn(t, "", append(base, "--max-messages", max, "--dry-run")...)
+		if err != nil || strings.Contains(out, "OVER THE LIMIT") {
+			t.Fatalf("max %s: %v\n%s", max, err, out)
+		}
+	}
+	// The default is 10000.
+	if defaultMaxMessages != 10000 {
+		t.Fatalf("default cap = %d", defaultMaxMessages)
+	}
+}

@@ -393,3 +393,35 @@ func TestRestoreNeverSendsDeletedFlag(t *testing.T) {
 		}
 	}
 }
+
+// The cap is a second check on top of the token: a plan over it is previewed
+// and flagged but never applied, whatever approved it.
+func TestRestoreMessageCap(t *testing.T) {
+	cfg := initRepo(t)
+	runBackup(t, cfg, fakeMailbox()) // 3 messages
+	tcfg := restoreCfg(cfg)
+
+	over := mustPlan(t, cfg, tcfg, mailtest.NewTarget(), RestoreOptions{MaxMessages: 2})
+	if !over.OverLimit || over.MaxMessages != 2 || over.Plan.Appends != 3 {
+		t.Fatalf("preview = %+v", over)
+	}
+	tgt := mailtest.NewTarget()
+	_, err := ApplyRestore(context.Background(), cfg, tcfg, tgt, approve(t, over), RestoreOptions{MaxMessages: 2})
+	if !errors.Is(err, ErrOverLimit) || len(tgt.Writes()) != 0 {
+		t.Fatalf("err = %v, writes = %v", err, tgt.Writes())
+	}
+
+	for _, max := range []int{3, 0} { // exactly at the cap, and no cap
+		tgt := mailtest.NewTarget()
+		prev := mustPlan(t, cfg, tcfg, tgt, RestoreOptions{MaxMessages: max})
+		if prev.OverLimit {
+			t.Fatalf("max %d: flagged over the limit", max)
+		}
+		if res, err := ApplyRestore(context.Background(), cfg, tcfg, tgt, approve(t, prev), RestoreOptions{MaxMessages: max}); err != nil || res.Appended != 3 {
+			t.Fatalf("max %d: %+v %v", max, res, err)
+		}
+	}
+	if _, err := PlanRestore(context.Background(), cfg, tcfg, mailtest.NewTarget(), RestoreOptions{MaxMessages: -1}); err == nil {
+		t.Fatal("a negative cap must be refused")
+	}
+}
