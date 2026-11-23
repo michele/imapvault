@@ -541,3 +541,35 @@ func TestIndexBackupFailureIsAWarningNotAFailedRun(t *testing.T) {
 		t.Errorf("warnings %v, want one about the index backup", rep.Warnings)
 	}
 }
+
+// A prune that removed nothing leaves the index as the last backup copy already
+// has it: writing another copy would only push an older, useful one out of the
+// newest seven.
+func TestPruneThatRemovesNothingWritesNoIndexBackup(t *testing.T) {
+	cfg, _ := retentionHistory(t)
+	r, _ := repo.Open(cfg.Repository.Path, nil)
+	count := func() int {
+		ents, _ := os.ReadDir(r.IndexBackupsDir())
+		return len(ents)
+	}
+	before := count()
+	rep, err := Prune(context.Background(), cfg, at20()) // nothing forgotten: nothing to remove
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Entries != 0 || rep.IndexBackup != "" || count() != before {
+		t.Errorf("report %+v, %d index backups (was %d): a prune that removed nothing must not write one", rep, count(), before)
+	}
+
+	// One that removed something does.
+	if _, err := Forget(context.Background(), cfg, at20()); err != nil {
+		t.Fatal(err)
+	}
+	rep, err = Prune(context.Background(), cfg, at20())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Entries == 0 || rep.IndexBackup == "" {
+		t.Errorf("report %+v: a prune that removed entries must write an index backup", rep)
+	}
+}

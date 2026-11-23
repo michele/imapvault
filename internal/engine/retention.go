@@ -223,10 +223,14 @@ func Prune(_ context.Context, cfg *config.Config, opts RetentionOptions) (*Prune
 			warn("could not remove tmp/%s: %v", e.Name(), err)
 		}
 	}
-	if p, err := writeIndexBackup(w.r, w.db, "prune", now); err != nil {
-		warn("index backup: %v", err)
-	} else {
-		rep.IndexBackup = filepath.Base(p)
+	// A copy of the index is worth writing only if prune changed the index: an
+	// idle prune would otherwise push older, useful copies out of the newest seven.
+	if rep.Entries+rep.Blobs+rep.Snapshots+rep.Folders > 0 {
+		if p, err := writeIndexBackup(w.r, w.db, "prune", now); err != nil {
+			warn("index backup: %v", err)
+		} else {
+			rep.IndexBackup = filepath.Base(p)
+		}
 	}
 	return rep, nil
 }
