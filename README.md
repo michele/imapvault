@@ -4,7 +4,7 @@ An open-source IMAP backup tool: point-in-time **snapshots** of a mailbox in a l
 repository, a grace period for deleted mail, mass-deletion alerts, and restore of any
 snapshot, folder or message back to an IMAP server.
 
-**Status: pre-alpha (M3, incremental backup).** `init`, `keygen`, `backup`, `snapshots`, `ls`, `show`, `diff`, `doctor` and `check` work. There is no restore, retention or deletion alert yet. See [docs/PLAN.md](docs/PLAN.md).
+**Status: pre-alpha (M4, mass-deletion guard).** `init`, `keygen`, `backup`, `snapshots`, `ls`, `show`, `diff`, `alerts`, `ack`, `pin`, `unpin`, `doctor` and `check` work. There is no restore or retention yet. See [docs/PLAN.md](docs/PLAN.md).
 
 ## Develop
 
@@ -32,6 +32,9 @@ imapvault --account personal ls latest         # folders in a snapshot ("latest"
 imapvault --account personal ls latest INBOX   # messages in a folder: UID, flags, size, date, sender, subject, hash
 imapvault --account personal show 3f9a1c2b     # one message by hash prefix; --raw writes the original .eml to stdout
 imapvault --account personal diff latest~1 latest   # per folder: added, deleted, moved, re-flagged, renumbered
+imapvault --account personal alerts            # guard alerts nobody acknowledged yet (--all: every alert)
+imapvault --account personal ack 1             # acknowledge alert 1 (--all: every open alert)
+imapvault --account personal pin latest~1      # protect a snapshot from retention; unpin undoes it
 imapvault --account personal check             # index + object presence; exit 1 on errors
 imapvault --account personal check --read-data # verify every object (no private key needed)
 imapvault --account personal check --decrypt   # decrypt and re-hash everything (needs the key)
@@ -60,7 +63,37 @@ read, the connection drops, Ctrl-C), it writes a snapshot marked **partial**: it
 that were not reached keep their previous state, and nothing is recorded as deleted. If nothing could be backed
 up, no snapshot is written. Run `backup` again to finish.
 
-Exit codes: `0` ok, `1` error, `2` partial backup. (`3`, a deletion alert, comes with the guard.)
+Exit codes: `0` ok, `1` error, `2` partial backup, `3` guard alert (`3` wins when a run is both).
+
+## Mass-deletion guard
+
+Before a snapshot is written, `backup` compares the run with the previous snapshot. The guard **trips** when
+more messages were deleted than `guard.max_deleted_percent` (of the previous snapshot) or `guard.max_deleted_count`
+allow, or when a folder vanished and some of its mail is gone, not just moved. A threshold of `0` switches that
+threshold off; the vanished-folder rule is always on. Moving mail between folders, renaming a folder, changing flags
+and a UIDVALIDITY reset are not deletions. Mail moved into a folder you exclude does count: the backup can no longer see it.
+
+When it trips, in one transaction with the snapshot: the new snapshot is **flagged**, the last good one is **pinned**,
+and an alert is recorded (sealed, in an encrypted repository). Then `guard.on_alert` runs, and `backup` exits `3`.
+The next run compares with the flagged snapshot, so the same loss does not alert twice. `alerts` lists what happened,
+`diff <pinned> <flagged>` shows which folders lost mail, and `ack <id>` acknowledges it. Until it is acknowledged,
+`prune` (not written yet) refuses to run and the pinned snapshot cannot be unpinned.
+
+```toml
+[guard]
+max_deleted_percent = 10
+max_deleted_count   = 500
+on_alert = "/usr/local/bin/notify-me 'imapvault alert: {account} {summary}'"
+```
+
+`on_alert` is **not run through a shell**: it is split into words (single and double quotes and backslashes work),
+`{account}` and `{summary}` are put into the arguments after the program name, and the program is executed
+directly. Folder names come from the server, so a folder called `$(rm -rf ~)` reaches your notifier as plain text.
+The same values are in the environment as `IMAPVAULT_ACCOUNT`, `IMAPVAULT_SUMMARY`, `IMAPVAULT_ALERT_ID` and
+`IMAPVAULT_SNAPSHOT`; if you want a shell, ask for one: `sh -c 'notify "$IMAPVAULT_SUMMARY"'`. The command gets 60
+seconds. If it fails the alert is still recorded and the run still exits `3`, with a warning. The summary names
+folders and counts, never subjects. The guard compares one run with the one before it, so a slow drip of deletions
+spread over many runs is not caught.
 
 **Server footprint.** On a server that does not track mod-sequences until a client asks (dovecot does this), the
 first `EXAMINE (CONDSTORE)` makes it start tracking them for that mailbox. No message or flag changes, but it is

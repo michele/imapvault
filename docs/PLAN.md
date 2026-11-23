@@ -196,17 +196,34 @@ Run-level:
 
 ## Mass-deletion guard
 
-Pure function in `plan`: (previous snapshot counts, this run's closures) → alert or none.
-Trips when deletions exceed `max_deleted_percent` or `max_deleted_count`, or when a folder that
-held messages vanished entirely. The trash being emptied counts as deletions from Trash.
+Pure function in `plan` (`plan.CheckGuard`): (previous snapshot counts, this run's changes) → alert or none.
+It runs inside `backup`, after the last folder and before the snapshot is written, over plaintext columns only.
 
-When it trips:
+**What counts as deleted.** The entries valid in the previous snapshot and gone now, classified by `plan.DiffSnapshots`
+(the same classifier as `diff`): only `Deleted` counts. A move to another folder, a flag change and a UIDVALIDITY
+renumbering do not. A message moved into a folder the config excludes does count: the backup can no longer see it. Emptying
+Trash shows up as deletions from Trash with no special case.
+
+Trips when deletions are **strictly more** than `max_deleted_percent` of the previous snapshot's messages or more than
+`max_deleted_count` (a threshold of 0 is off; a previous snapshot of 0 messages skips the percent check; no previous snapshot
+skips the guard), or when **a folder vanished and some of its messages were deleted**, not just moved. That last rule has no
+switch, and a plain rename or a merge into another folder does not trip it.
+
+The comparison is with the previous *snapshot*, so deletions that a run which died before writing a snapshot had already
+committed are still counted, and after an alert the next run compares with the flagged snapshot and stays quiet.
+
+When it trips, in the same transaction as the snapshot (`index.CompleteRun`):
 - The snapshot is still written (you want to see the bad state) but is marked `flagged`.
 - The previous snapshot is **auto-pinned**.
-- An `alerts` row is created, `on_alert` runs, and the command exits with code **3**
-  (0 = ok, 1 = error, 2 = partial, 3 = alert).
-- `prune` refuses to run while unacknowledged alerts exist. `imapvault alerts` lists them,
-  `imapvault ack <id>` acknowledges one.
+- An `alerts` row is created with a sealed summary (counts and folder names, never subjects), then `on_alert` runs, and
+  the command exits with code **3** (0 = ok, 1 = error, 2 = partial, 3 = alert; 3 wins over 2, and a partial run is guarded too).
+- `prune` refuses to run while unacknowledged alerts exist. `imapvault alerts` lists them, `imapvault ack <id>` acknowledges
+  one, and the snapshot an unacknowledged alert pinned cannot be unpinned.
+
+`on_alert` is never run through a shell, because folder names come from the server. The line is split into words, `{account}`
+and `{summary}` are substituted into the words after the program name, and the program is executed directly with the same
+values in `IMAPVAULT_ACCOUNT`, `IMAPVAULT_SUMMARY`, `IMAPVAULT_ALERT_ID` and `IMAPVAULT_SNAPSHOT`. It has 60 seconds and is
+not cancelled by Ctrl-C. A failing hook is a warning: the alert is already recorded.
 
 ## Retention: `forget` and `prune`
 
@@ -336,8 +353,19 @@ because dovecot derives UIDVALIDITY from the folder's creation second. A randomi
 resets, renames, removals and injected failures; with and without CONDSTORE) checks after every completed run that the snapshot
 equals the server; 80 seeds passed during development, the default is 4.
 
-**M4 Guard.** Thresholds, flagged snapshots, auto-pin, alerts/ack, `on_alert`, exit codes, `pin`/`unpin`.
+**M4 Guard (done).** Thresholds, flagged snapshots, auto-pin, alerts/ack, `on_alert`, exit codes, `pin`/`unpin`.
 *Done when* an itest that deletes everything and expunges Trash produces an alert, exit 3 and a pinned previous snapshot.
+*Findings:* no schema change and no `format_version` bump: `snapshots.pinned/flagged` and `alerts` were already in the M1
+schema. `CompleteRun` takes an optional alert and writes snapshot, flag, pin and alert together, so a crash cannot leave a
+flagged snapshot without its alert. The guard reuses `plan.DiffSnapshots`, so `diff` and the guard agree on what a deletion
+is. Backup still never needs the private key: it reads only plaintext, and seals the summary with the recipients; a folder that
+vanished has no readable name there and shows as `#<id>` (`diff` and `ls` map it back with the key). **`on_alert` is exec'd, not
+run by `sh -c`**: PLAN.md's earlier example looked like a shell line, but a hostile folder name (`$(...)`) would have become
+code on the backup machine, so the line is split by imapvault and the values go in as arguments and environment (the
+hostile-folder test pins this). An `on_alert` that does not parse refuses the run before it starts, not after a mass
+deletion. The guard looks at one run against the previous snapshot, so a slow drip of deletions spread over many runs below
+the thresholds is not caught; retention's grace period (M5) is what protects against that. `unpin` refuses while an
+unacknowledged alert owns the pin, and `ack`/`pin` take the exclusive lock, so they fail at once while a backup runs.
 
 **M5 Retention.** `forget` + `prune` with policy, grace period, pins, alert lock, dry-run, index backups.
 *Done when* `plan.Retain` is exhaustively table-tested and prune on a fixture repo frees exactly the expected blobs.
