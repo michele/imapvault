@@ -39,6 +39,9 @@ type Fake struct {
 	Calls   []string
 	// FailBodies, when set, makes FetchBodies return it for that folder.
 	FailBodies map[string]error
+	// FailAfter, when set for a folder, makes FetchBodies deliver that many
+	// bodies and then fail, like a connection dropping mid-folder.
+	FailAfter map[string]int
 }
 
 var _ mail.Source = (*Fake)(nil)
@@ -156,10 +159,15 @@ func (f *Fake) FetchBodies(ctx context.Context, folder string, uids []uint32, fn
 	if err != nil {
 		return err
 	}
+	delivered := 0
 	for _, uid := range uids {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if n, ok := f.FailAfter[folder]; ok && delivered >= n {
+			return fmt.Errorf("injected failure after %d bodies", n)
+		}
+		delivered++
 		found := false
 		for _, m := range fo.Messages {
 			if m.UID == uid {

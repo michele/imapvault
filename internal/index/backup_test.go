@@ -33,10 +33,7 @@ func newFolder(t *testing.T, db *DB, run int64, name string) int64 {
 
 func finish(t *testing.T, db *DB, run int64) {
 	t.Helper()
-	if err := db.FinishRun(run, RunComplete, t0); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.InsertSnapshot(run, t0); err != nil {
+	if err := db.CompleteRun(run, t0); err != nil {
 		t.Fatal(err)
 	}
 }

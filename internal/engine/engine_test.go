@@ -19,6 +19,7 @@ func testConfig(t *testing.T) *config.Config {
 	return &config.Config{
 		IMAP:       config.IMAP{Host: "imap.example.com", Username: "me@example.com"},
 		Repository: config.Repository{Path: filepath.Join(t.TempDir(), "repo")},
+		Folders:    config.Folders{Include: []string{"*"}}, // what the config default gives
 	}
 }
 

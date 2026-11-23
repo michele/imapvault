@@ -93,3 +93,34 @@ func checkCanary(r *repo.Repo, o *seal.Opener) error {
 	copy(h[:], hash)
 	return seal.CheckCanary(o, sealed, h)
 }
+
+// checkRecipients refuses a config whose recipients differ from the repository's.
+// repo.toml is the source of truth: a drifted config must never silently encrypt
+// new data to different keys, or stop encrypting. Order does not matter.
+func checkRecipients(r *repo.Repo, configured []string) error {
+	enc := r.Meta.Encryption
+	want := map[string]bool{}
+	for _, k := range configured {
+		if k = strings.TrimSpace(k); k != "" {
+			want[k] = true
+		}
+	}
+	switch {
+	case !enc.Enabled && len(want) > 0:
+		return fmt.Errorf("the repository is not encrypted but the config sets encryption.recipients; encryption is decided at init and cannot be added later (create a new repository)")
+	case enc.Enabled && len(want) == 0:
+		return fmt.Errorf("the repository is encrypted to %d recipient(s) but the config sets no encryption.recipients; refusing to back up without them", len(enc.Recipients))
+	}
+	have := map[string]bool{}
+	for _, k := range enc.Recipients {
+		have[k] = true
+	}
+	same := len(have) == len(want)
+	for k := range want {
+		same = same && have[k]
+	}
+	if !same {
+		return fmt.Errorf("encryption.recipients in the config differ from the repository's (repo.toml lists %d, the config %d); changing recipients needs a rekey, which does not exist yet", len(have), len(want))
+	}
+	return nil
+}

@@ -287,14 +287,24 @@ type Snapshot struct {
 const entryInSnapshot = `e.valid_from_run <= ?1 AND (e.valid_to_run IS NULL OR e.valid_to_run > ?1)`
 const folderInSnapshot = `f.first_seen_run <= ?1 AND (f.gone_run IS NULL OR f.gone_run > ?1)`
 
-// InsertSnapshot writes the snapshot for run, computing its counts from the
-// entries.
-func (db *DB) InsertSnapshot(run int64, now time.Time) error {
-	_, err := db.Exec(`INSERT INTO snapshots(id, created_at, folders, messages)
+// CompleteRun marks run complete and writes its snapshot, atomically, computing
+// the snapshot's counts from the entries. A run is either a snapshot or it isn't.
+func (db *DB) CompleteRun(run int64, now time.Time) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`UPDATE runs SET status = 'complete', finished_at = ?2 WHERE id = ?1`, run, ts(now)); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO snapshots(id, created_at, folders, messages)
 		SELECT ?1, ?2,
 		  (SELECT count(*) FROM folders f WHERE `+folderInSnapshot+`),
-		  (SELECT count(*) FROM entries e WHERE `+entryInSnapshot+`)`, run, ts(now))
-	return err
+		  (SELECT count(*) FROM entries e WHERE `+entryInSnapshot+`)`, run, ts(now)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Snapshots lists snapshots, oldest first.
