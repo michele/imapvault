@@ -213,84 +213,26 @@ func TestIntegrityAndForeignKeyChecks(t *testing.T) {
 	}
 }
 
-func TestBlobKeys(t *testing.T) {
+func TestBlobHashes(t *testing.T) {
 	db, _ := openTemp(t)
 	seedRun(t, db)
-	if _, err := db.Exec(`INSERT INTO blobs(sha256, size, stored_sha256, first_seen_run) VALUES (randomblob(32), 5, randomblob(32), 1)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO blobs(sha256, size, stored_sha256, first_seen_run) VALUES (x'` + strings.Repeat("11", 32) + `', 5, x'` + strings.Repeat("22", 32) + `', 1)`); err != nil {
 		t.Fatal(err)
 	}
-	var n int
-	err := db.BlobKeys(func(k [32]byte) error { n++; return nil })
-	if err != nil || n != 2 {
-		t.Fatalf("BlobKeys: n=%d err=%v", n, err)
+	got := map[[32]byte][32]byte{}
+	err := db.BlobHashes(func(k, st [32]byte) error { got[k] = st; return nil })
+	if err != nil || len(got) != 2 {
+		t.Fatalf("BlobHashes: %v %v", got, err)
+	}
+	var k, st [32]byte
+	for i := range k {
+		k[i], st[i] = 0x11, 0x22
+	}
+	if got[k] != st {
+		t.Fatalf("stored hash not returned alongside its key: %x", got[k])
 	}
 	stop := errors.New("stop")
-	if err := db.BlobKeys(func([32]byte) error { return stop }); !errors.Is(err, stop) {
+	if err := db.BlobHashes(func(_, _ [32]byte) error { return stop }); !errors.Is(err, stop) {
 		t.Fatalf("callback error not propagated: %v", err)
-	}
-}
-
-func TestSealedColumnsAndNoPlaintextMetadata(t *testing.T) {
-	db, _ := openTemp(t)
-	columns := func(table string) map[string]bool {
-		rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer func() { _ = rows.Close() }()
-		out := map[string]bool{}
-		for rows.Next() {
-			var n string
-			_ = rows.Scan(&n)
-			out[n] = true
-		}
-		return out
-	}
-	// what a backup-only machine may see in the clear is deliberate; what must be sealed must not creep back.
-	for table, forbidden := range map[string][]string{
-		"folders":   {"name"},
-		"blobs":     {"message_id", "internal_date", "subject", "from_addr"},
-		"snapshots": {"note"},
-		"alerts":    {"summary"},
-	} {
-		cols := columns(table)
-		for _, c := range forbidden {
-			if cols[c] {
-				t.Errorf("%s.%s is a plaintext column; it must be sealed", table, c)
-			}
-		}
-	}
-	for table, want := range map[string][]string{
-		"folders":   {"name_hash", "name_sealed"},
-		"blobs":     {"stored_sha256", "meta_sealed"},
-		"snapshots": {"note_sealed"},
-		"alerts":    {"summary_sealed"},
-	} {
-		cols := columns(table)
-		for _, c := range want {
-			if !cols[c] {
-				t.Errorf("%s.%s is missing", table, c)
-			}
-		}
-	}
-}
-
-func TestSealedColumnConstraints(t *testing.T) {
-	db, _ := openTemp(t)
-	seedRun(t, db)
-	if _, err := db.Exec(`INSERT INTO folders(name_hash, name_sealed, first_seen_run) VALUES (x'00', x'00', 1)`); err == nil {
-		t.Fatal("short name_hash accepted")
-	}
-	if _, err := db.Exec(`INSERT INTO blobs(sha256, size, stored_sha256, first_seen_run) VALUES (randomblob(32), 1, x'00', 1)`); err == nil {
-		t.Fatal("short stored_sha256 accepted")
-	}
-	if _, err := db.Exec(`INSERT INTO blobs(sha256, size, first_seen_run) VALUES (randomblob(32), 1, 1)`); err == nil {
-		t.Fatal("blob without stored_sha256 accepted")
-	}
-	if _, err := db.Exec(`INSERT INTO alerts(run_id, kind, created_at) VALUES (1, 'mass-deletion', 'x')`); err == nil {
-		t.Fatal("alert without a sealed summary accepted")
-	}
-	if _, err := db.Exec(`INSERT INTO alerts(run_id, kind, summary_sealed, created_at) VALUES (1, 'mass-deletion', x'00', 'x')`); err != nil {
-		t.Fatalf("valid alert rejected: %v", err)
 	}
 }

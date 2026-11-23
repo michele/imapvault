@@ -34,23 +34,32 @@ type Finding struct {
 
 // CheckOptions tune Check.
 type CheckOptions struct {
-	// ReadData re-reads and re-hashes every object file. Without it check only
-	// proves that every indexed blob has an object file.
+	// ReadData reads every object file. Without it check only proves that every
+	// indexed blob has an object file. In an encrypted repository this needs no
+	// key: indexed objects are compared with the stored hash recorded when they
+	// were written, which catches bit rot and truncation but not an attacker who
+	// rewrites the file and its index row together.
 	ReadData bool
+	// Decrypt additionally decrypts every object with the private key and re-hashes
+	// the plaintext against its key. It implies ReadData and needs an identity in
+	// an encrypted repository.
+	Decrypt bool
 }
 
 // CheckReport is the result of Check. Errors mean the repository cannot be
 // trusted (missing or corrupt data, a damaged index). Warnings are leftovers a
 // crash may legitimately produce (see the durability rule) and prune cleans up.
 type CheckReport struct {
-	Repository      string    `json:"repository"`
-	FormatVersion   int       `json:"format_version"`
-	SchemaVersion   int       `json:"schema_version"`
-	Blobs           int       `json:"blobs"`            // rows in the index
-	Objects         int       `json:"objects"`          // object files on disk
-	ObjectsVerified int       `json:"objects_verified"` // read and re-hashed (--read-data)
-	Errors          []Finding `json:"errors"`
-	Warnings        []Finding `json:"warnings"`
+	Repository       string    `json:"repository"`
+	FormatVersion    int       `json:"format_version"`
+	SchemaVersion    int       `json:"schema_version"`
+	Blobs            int       `json:"blobs"`   // rows in the index
+	Objects          int       `json:"objects"` // object files on disk
+	Encrypted        bool      `json:"encrypted"`
+	ObjectsVerified  int       `json:"objects_verified"`  // read and checked (--read-data)
+	ObjectsDecrypted int       `json:"objects_decrypted"` // decrypted and re-hashed (--decrypt)
+	Errors           []Finding `json:"errors"`
+	Warnings         []Finding `json:"warnings"`
 
 	perKind map[string]int
 }
@@ -102,13 +111,34 @@ func Check(ctx context.Context, cfg *config.Config, opts CheckOptions) (*CheckRe
 	if err != nil {
 		return nil, err
 	}
+	opts.ReadData = opts.ReadData || opts.Decrypt
+	rep := &CheckReport{Repository: r.Path, FormatVersion: r.Meta.FormatVersion, Encrypted: r.Meta.Encryption.Enabled}
+
+	// Resolve the private key before taking the lock: identity_command may be slow.
+	identity := ""
+	if opts.Decrypt && rep.Encrypted {
+		warnings, err := cfg.ResolveIdentity(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, w := range warnings {
+			rep.add(SeverityWarning, "identity", "%s", w)
+		}
+		identity = cfg.Encryption.Identity
+		opener, err := openerOf(identity)
+		if err != nil {
+			return nil, err
+		}
+		if err := checkCanary(r, opener); err != nil {
+			return nil, err
+		}
+	}
+
 	unlock, err := r.Lock(repo.Shared)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-
-	rep := &CheckReport{Repository: r.Path, FormatVersion: r.Meta.FormatVersion}
 
 	haveDirs := true
 	for _, d := range []string{r.ObjectsDir(), r.TmpDir(), r.IndexBackupsDir()} {
@@ -120,7 +150,7 @@ func Check(ctx context.Context, cfg *config.Config, opts CheckOptions) (*CheckRe
 
 	indexed, haveIndex := checkIndex(ctx, r, rep)
 	if haveDirs {
-		if err := checkObjects(ctx, r, rep, indexed, haveIndex, opts); err != nil {
+		if err := checkObjects(ctx, r, rep, indexed, haveIndex, opts, identity); err != nil {
 			return nil, err
 		}
 		checkTmp(r, rep)
@@ -130,9 +160,9 @@ func Check(ctx context.Context, cfg *config.Config, opts CheckOptions) (*CheckRe
 }
 
 // checkIndex opens the index read-only, runs its own consistency checks and
-// returns the set of blob keys it references. ok is false when the index could
+// returns the blobs it references with their recorded stored-file hashes. ok is false when the index could
 // not be read, in which case orphan detection is skipped.
-func checkIndex(ctx context.Context, r *repo.Repo, rep *CheckReport) (keys map[objects.Key]struct{}, ok bool) {
+func checkIndex(ctx context.Context, r *repo.Repo, rep *CheckReport) (stored map[objects.Key][32]byte, ok bool) {
 	db, err := index.Open(r.IndexPath(), index.Options{ReadOnly: true})
 	if err != nil {
 		rep.add(SeverityError, "index-open", "cannot open the index: %v", err)
@@ -162,28 +192,33 @@ func checkIndex(ctx context.Context, r *repo.Repo, rep *CheckReport) (keys map[o
 		rep.add(SeverityError, "dangling-reference", "%s row %d references a missing %s row", v.Table, v.RowID, v.Parent)
 	}
 
-	keys = map[objects.Key]struct{}{}
-	err = db.BlobKeys(func(k [32]byte) error {
+	stored = map[objects.Key][32]byte{}
+	err = db.BlobHashes(func(k, st [32]byte) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		keys[objects.Key(k)] = struct{}{}
+		stored[objects.Key(k)] = st
 		return nil
 	})
 	if err != nil {
 		rep.add(SeverityError, "index-corrupt", "reading blobs: %v", err)
 		return nil, false
 	}
-	rep.Blobs = len(keys)
-	return keys, true
+	rep.Blobs = len(stored)
+	return stored, true
 }
 
-func checkObjects(ctx context.Context, r *repo.Repo, rep *CheckReport, indexed map[objects.Key]struct{}, haveIndex bool, opts CheckOptions) error {
-	st, err := objects.Open(r.ObjectsDir(), r.TmpDir(), objects.Options{})
+func checkObjects(ctx context.Context, r *repo.Repo, rep *CheckReport, indexed map[objects.Key][32]byte, haveIndex bool, opts CheckOptions, identity string) error {
+	st, err := openStore(r, identity)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = st.Close() }()
+
+	// An object's content can be verified without a key in a plain repository, or
+	// when we hold the private key. Otherwise only the stored hash is available,
+	// and only objects the index recorded a hash for.
+	contentVerifiable := opts.Decrypt || !rep.Encrypted
 
 	onDisk := map[objects.Key]struct{}{}
 	err = st.Walk(func(k objects.Key) error {
@@ -191,13 +226,43 @@ func checkObjects(ctx context.Context, r *repo.Repo, rep *CheckReport, indexed m
 			return err
 		}
 		onDisk[k] = struct{}{}
-		if haveIndex {
-			if _, ok := indexed[k]; !ok {
-				rep.add(SeverityWarning, "orphan-object", "object %s is not referenced by the index (prune removes it)", k)
+		storedHash, isIndexed := indexed[k]
+		if haveIndex && !isIndexed {
+			rep.add(SeverityWarning, "orphan-object", "object %s is not referenced by the index (prune removes it)", k)
+		}
+
+		enc, err := st.Encrypted(k)
+		if err != nil {
+			rep.add(SeverityError, "corrupt-object", "%v", err)
+			return nil
+		}
+		switch {
+		case rep.Encrypted && !enc:
+			rep.add(SeverityError, "plaintext-object", "object %s is stored unencrypted in an encrypted repository", k)
+			return nil
+		case !rep.Encrypted && enc:
+			rep.add(SeverityError, "unexpected-encrypted-object", "object %s is encrypted but the repository is not", k)
+			return nil
+		}
+
+		if !opts.ReadData {
+			return nil
+		}
+		if !contentVerifiable && !isIndexed {
+			return nil // nothing to compare an unindexed encrypted object with, and no key
+		}
+		rep.ObjectsVerified++
+		if rep.Encrypted && isIndexed {
+			// cheap, key-free, and it also validates the hash the index recorded.
+			if err := st.VerifyStored(k, storedHash); err != nil {
+				rep.add(SeverityError, "corrupt-object", "%v", err)
+				return nil
 			}
 		}
-		if opts.ReadData {
-			rep.ObjectsVerified++
+		if contentVerifiable {
+			if rep.Encrypted {
+				rep.ObjectsDecrypted++
+			}
 			if err := st.Verify(k); err != nil {
 				rep.add(SeverityError, "corrupt-object", "%v", err)
 			}

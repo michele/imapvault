@@ -220,24 +220,27 @@ func (db *DB) ForeignKeyCheck() ([]FKViolation, error) {
 	return out, rows.Err()
 }
 
-// BlobKeys calls fn with the key of every row in blobs.
-func (db *DB) BlobKeys(fn func(sha256 [32]byte) error) error {
-	rows, err := db.Query(`SELECT sha256 FROM blobs`)
+// BlobHashes calls fn with the key and the recorded stored-file hash of every
+// row in blobs. The stored hash is what lets a machine without the private key
+// verify object files.
+func (db *DB) BlobHashes(fn func(sha256, stored [32]byte) error) error {
+	rows, err := db.Query(`SELECT sha256, stored_sha256 FROM blobs`)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		var b []byte
-		if err := rows.Scan(&b); err != nil {
+		var k, st []byte
+		if err := rows.Scan(&k, &st); err != nil {
 			return err
 		}
-		var k [32]byte
-		if len(b) != len(k) {
-			return fmt.Errorf("blobs row has a %d-byte key", len(b))
+		var key, stored [32]byte
+		if len(k) != len(key) || len(st) != len(stored) {
+			return fmt.Errorf("blobs row has a %d-byte key and a %d-byte stored hash", len(k), len(st))
 		}
-		copy(k[:], b)
-		if err := fn(k); err != nil {
+		copy(key[:], k)
+		copy(stored[:], st)
+		if err := fn(key, stored); err != nil {
 			return err
 		}
 	}

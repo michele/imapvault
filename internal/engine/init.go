@@ -18,6 +18,8 @@ type InitResult struct {
 	Account       string `json:"account"`
 	FormatVersion int    `json:"format_version"`
 	SchemaVersion int    `json:"schema_version"`
+	Encrypted     bool   `json:"encrypted"`
+	Recipients    int    `json:"recipients"`
 }
 
 // accountOf is the binding a config implies. Only host and username take part,
@@ -27,9 +29,15 @@ func accountOf(cfg *config.Config) repo.Account {
 }
 
 // Init creates the repository at cfg.Repository.Path and its empty index. It
-// never contacts the server, so it needs no password.
+// never contacts the server, so it needs no password. With encryption.recipients
+// configured the repository is encrypted to them; that is fixed for its lifetime.
+// Recipients are validated before anything is written to disk.
 func Init(cfg *config.Config) (*InitResult, error) {
-	r, err := repo.Init(cfg.Repository.Path, accountOf(cfg), repo.Encryption{})
+	enc, err := newEncryption(cfg.Encryption.Recipients)
+	if err != nil {
+		return nil, err
+	}
+	r, err := repo.Init(cfg.Repository.Path, accountOf(cfg), enc)
 	if err != nil {
 		return nil, err
 	}
@@ -53,5 +61,7 @@ func Init(cfg *config.Config) (*InitResult, error) {
 		Account:       r.Meta.Account.ID,
 		FormatVersion: r.Meta.FormatVersion,
 		SchemaVersion: v,
+		Encrypted:     enc.Enabled,
+		Recipients:    len(enc.Recipients),
 	}, nil
 }
