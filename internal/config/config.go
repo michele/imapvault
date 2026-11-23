@@ -129,6 +129,14 @@ type Guard struct {
 
 func defaultGuard() Guard { return Guard{MaxDeletedPercent: 10, MaxDeletedCount: 500} }
 
+// Restore is the opt-in for writing to this account's server. Every other
+// command is read-only on the server; `restore` refuses to append anything to an
+// account whose config does not set allow_append. A backup-only config (cron, a
+// NAS) therefore can never write, even if restore is run against it by mistake.
+type Restore struct {
+	AllowAppend bool `toml:"allow_append"`
+}
+
 // Config is the whole configuration file.
 type Config struct {
 	IMAP       IMAP       `toml:"imap"`
@@ -137,6 +145,7 @@ type Config struct {
 	Retention  Retention  `toml:"retention"`
 	Guard      Guard      `toml:"guard"`
 	Encryption Encryption `toml:"encryption"`
+	Restore    Restore    `toml:"restore"`
 
 	// Account is the --account name this configuration was loaded for ("" when
 	// loaded by path). It only affects the password lookup; it is never read

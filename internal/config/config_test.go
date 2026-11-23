@@ -209,3 +209,24 @@ func TestLoadOfflineDoesNotNeedPassword(t *testing.T) {
 		t.Error("LoadOffline must still validate the repository path")
 	}
 }
+
+// Writing to a server is opt-in per account: absent means off.
+func TestRestoreAllowAppend(t *testing.T) {
+	cfg, err := Parse([]byte(validBase), pw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Restore.AllowAppend {
+		t.Fatal("allow_append must default to false")
+	}
+	cfg, err = Parse([]byte(validBase+"\n[restore]\nallow_append = true\n"), pw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Restore.AllowAppend {
+		t.Fatal("allow_append = true not read")
+	}
+	if _, err := Parse([]byte(validBase+"\n[restore]\nallow_apend = true\n"), pw); err == nil {
+		t.Fatal("a misspelled key must be rejected, not silently leave writing off or on")
+	}
+}
