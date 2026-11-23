@@ -44,7 +44,7 @@ func addBlob(t *testing.T, cfg *config.Config, raw string) objects.Key {
 		t.Fatal(err)
 	}
 	defer func() { _ = st.Close() }()
-	k, _, _, err := st.Put([]byte(raw))
+	k, stored, _, err := st.Put([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func addBlob(t *testing.T, cfg *config.Config, raw string) objects.Key {
 	if _, err := db.Exec(`INSERT OR IGNORE INTO runs(id, started_at, status) VALUES (1,'2026-11-23T10:00:00Z','complete')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO blobs(sha256, size, first_seen_run) VALUES (?, ?, 1)`, k[:], len(raw)); err != nil {
+	if _, err := db.Exec(`INSERT INTO blobs(sha256, size, stored_sha256, first_seen_run) VALUES (?, ?, ?, 1)`, k[:], len(raw), stored[:]); err != nil {
 		t.Fatal(err)
 	}
 	return k
@@ -220,7 +220,7 @@ func TestCheckDanglingIndexReference(t *testing.T) {
 	ctx := context.Background()
 	conn, _ := db.Conn(ctx)
 	_, _ = conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`)
-	_, _ = conn.ExecContext(ctx, `INSERT INTO folders(id, name, first_seen_run) VALUES (1,'INBOX',1)`)
+	_, _ = conn.ExecContext(ctx, `INSERT INTO folders(id, name_hash, name_sealed, first_seen_run) VALUES (1, zeroblob(32), x'00', 1)`)
 	_, err = conn.ExecContext(ctx, `INSERT INTO entries(folder_id, uidvalidity, uid, blob, valid_from_run) VALUES (1,1,1,x'ff',1)`)
 	if err != nil {
 		t.Fatal(err)

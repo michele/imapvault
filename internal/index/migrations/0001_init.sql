@@ -1,6 +1,12 @@
 -- Schema v1. Snapshots are not copies: each entry records the interval of runs
 -- in which it was true. A snapshot at run R is every entry with
 --   valid_from_run <= R AND (valid_to_run IS NULL OR valid_to_run > R).
+--
+-- Encryption: a backup machine holds only public keys, so everything it must
+-- read back (to diff, to guard, to prune, to check) is plaintext, and everything
+-- descriptive is sealed with age in *_sealed columns that backup writes and never
+-- reads. Plaintext on purpose: positions, flags, sizes, EMAILID, hashes, counts,
+-- timestamps. See docs/PLAN.md "Encryption" for what this leaks.
 
 CREATE TABLE runs (
     id           INTEGER PRIMARY KEY,
@@ -17,14 +23,15 @@ CREATE TABLE snapshots (
     pinned     INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1)),
     flagged    INTEGER NOT NULL DEFAULT 0 CHECK (flagged IN (0, 1)),
     forgotten  INTEGER NOT NULL DEFAULT 0 CHECK (forgotten IN (0, 1)),
-    note       TEXT NOT NULL DEFAULT '',
+    note_sealed BLOB,
     folders    INTEGER NOT NULL DEFAULT 0,
     messages   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE folders (
     id             INTEGER PRIMARY KEY,
-    name           TEXT NOT NULL,
+    name_hash      BLOB NOT NULL CHECK (length(name_hash) = 32), -- HMAC-SHA256(folder_key, name)
+    name_sealed    BLOB NOT NULL,
     delimiter      TEXT NOT NULL DEFAULT '',
     special_use    TEXT NOT NULL DEFAULT '',
     uidvalidity    INTEGER NOT NULL DEFAULT 0,
@@ -33,15 +40,15 @@ CREATE TABLE folders (
     first_seen_run INTEGER NOT NULL REFERENCES runs(id),
     gone_run       INTEGER REFERENCES runs(id)
 );
-CREATE UNIQUE INDEX folders_live_name ON folders(name) WHERE gone_run IS NULL;
+CREATE UNIQUE INDEX folders_live_name ON folders(name_hash) WHERE gone_run IS NULL;
 
 -- One row per unique raw message. sha256 is the hash of the exact server bytes.
 -- emailid (RFC 8474) is only a download-avoidance hint, never the key.
 CREATE TABLE blobs (
     sha256         BLOB PRIMARY KEY CHECK (length(sha256) = 32),
     size           INTEGER NOT NULL,
-    internal_date  TEXT,
-    message_id     TEXT,
+    stored_sha256  BLOB NOT NULL CHECK (length(stored_sha256) = 32), -- SHA-256 of the object file; verifiable without the private key
+    meta_sealed    BLOB, -- sealed Message-ID, INTERNALDATE, From/To/Subject/Date
     emailid        TEXT,
     first_seen_run INTEGER NOT NULL REFERENCES runs(id)
 ) WITHOUT ROWID;
@@ -67,7 +74,7 @@ CREATE TABLE alerts (
     id              INTEGER PRIMARY KEY,
     run_id          INTEGER NOT NULL REFERENCES runs(id),
     kind            TEXT NOT NULL,
-    summary         TEXT NOT NULL,
+    summary_sealed  BLOB NOT NULL,
     created_at      TEXT NOT NULL,
     acknowledged_at TEXT
 );
