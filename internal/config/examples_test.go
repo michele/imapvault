@@ -17,6 +17,7 @@ func TestExampleConfigsParse(t *testing.T) {
 	files := []string{
 		"examples/fastmail.toml",
 		"examples/generic-imap.toml",
+		"examples/backup-only.toml",
 	}
 	for _, f := range files {
 		t.Run(f, func(t *testing.T) {

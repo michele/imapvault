@@ -1,0 +1,23 @@
+# A backup-only machine: a cron job, a NAS, a container. It can back up, forget, prune and verify
+# the repository, and it can never read your mail or write to your server.
+#   * only PUBLIC keys: no `identity_file`, so a stolen backup host reveals no message
+#   * no [restore] section: `restore` refuses to append to this account's server
+# Read and restore from another machine that holds the private key (see examples/fastmail.toml).
+[imap]
+host = "imap.fastmail.com"
+username = "you@example.com"
+password_file = "/etc/imapvault/fastmail.password"
+
+[repository]
+path = "/var/lib/imapvault/fastmail"
+
+[folders]
+exclude = ["Spam", "Junk"]
+
+[guard]
+on_alert = "/usr/local/bin/notify-me 'imapvault alert: {account} {summary}'"
+
+# Decided at `imapvault init`; it cannot be added later. Make a key pair elsewhere with
+# `imapvault keygen --out personal.key`, and add a second, offline recovery key.
+[encryption]
+recipients = ["age1workingkey...", "age1recoverykey..."]
