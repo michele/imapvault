@@ -26,7 +26,9 @@ func dialTestServer(t *testing.T) *imapclient.Client {
 	if err != nil {
 		t.Fatalf("dial test server (is `make itest-up` running?): %v", err)
 	}
-	t.Cleanup(func() { _ = c.Close() })
+	// LOGOUT first: a bare close is not noticed by the server through the container's
+	// port forward, and its per-user connection limit (10) then starves later packages.
+	t.Cleanup(func() { _ = c.Logout().Wait(); _ = c.Close() })
 	if err := c.Login("me@imapvault.test", pass).Wait(); err != nil {
 		t.Fatalf("login: %v", err)
 	}
