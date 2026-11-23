@@ -18,6 +18,32 @@ var forbiddenCalls = map[string]bool{
 	"Create": true, "Subscribe": true, "Unsubscribe": true, "Idle": true, "Enable": true,
 }
 
+// violation reports why n breaks the read-only rule, or "" when it does not.
+func violation(n ast.Node) string {
+	switch x := n.(type) {
+	case *ast.CallExpr:
+		sel, ok := x.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return ""
+		}
+		if forbiddenCalls[sel.Sel.Name] {
+			return "forbidden call ." + sel.Sel.Name + "() in a read-only source"
+		}
+		if sel.Sel.Name == "Select" && !hasReadOnlyTrue(x) {
+			return "Select without ReadOnly: true (must be EXAMINE)"
+		}
+	case *ast.CompositeLit:
+		if isType(x.Type, "FetchItemBodySection") && !fieldIsTrue(x, "Peek") {
+			return `FetchItemBodySection without Peek: true would set \Seen`
+		}
+		// CondStore (and any other select option) may only ride on a read-only select.
+		if isType(x.Type, "SelectOptions") && !fieldIsTrue(x, "ReadOnly") {
+			return "SelectOptions without ReadOnly: true"
+		}
+	}
+	return ""
+}
+
 func TestSourceIsReadOnly(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -35,23 +61,8 @@ func TestSourceIsReadOnly(t *testing.T) {
 		}
 		checked++
 		ast.Inspect(f, func(n ast.Node) bool {
-			switch x := n.(type) {
-			case *ast.CallExpr:
-				sel, ok := x.Fun.(*ast.SelectorExpr)
-				if !ok {
-					return true
-				}
-				pos := fset.Position(x.Pos())
-				if forbiddenCalls[sel.Sel.Name] {
-					t.Errorf("%s: forbidden call .%s() in a read-only source", pos, sel.Sel.Name)
-				}
-				if sel.Sel.Name == "Select" && !hasReadOnlyTrue(x) {
-					t.Errorf("%s: Select without ReadOnly: true (must be EXAMINE)", pos)
-				}
-			case *ast.CompositeLit:
-				if isType(x.Type, "FetchItemBodySection") && !fieldIsTrue(x, "Peek") {
-					t.Errorf("%s: FetchItemBodySection without Peek: true would set \\Seen", fset.Position(x.Pos()))
-				}
+			if msg := violation(n); msg != "" {
+				t.Errorf("%s: %s", fset.Position(n.Pos()), msg)
 			}
 			return true
 		})
@@ -100,10 +111,12 @@ func hasReadOnlyTrue(call *ast.CallExpr) bool {
 // The checker itself must catch what it claims to: run it over bad snippets.
 func TestSafetyCheckerCatchesViolations(t *testing.T) {
 	bad := map[string]string{
-		"store":     `package p; func f(c C) { c.Store(nil, nil, nil) }`,
-		"expunge":   `package p; func f(c C) { c.Expunge() }`,
-		"select rw": `package p; func f(c C) { c.Select("x", nil) }`,
-		"no peek":   `package p; var _ = &imap.FetchItemBodySection{}`,
+		"store":                      `package p; func f(c C) { c.Store(nil, nil, nil) }`,
+		"expunge":                    `package p; func f(c C) { c.Expunge() }`,
+		"append":                     `package p; func f(c C) { c.Append("x", 0, nil) }`,
+		"select rw":                  `package p; func f(c C) { c.Select("x", nil) }`,
+		"no peek":                    `package p; var _ = &imap.FetchItemBodySection{}`,
+		"condstore without readonly": `package p; var _ = &imap.SelectOptions{CondStore: true}`,
 	}
 	for name, src := range bad {
 		t.Run(name, func(t *testing.T) {
@@ -114,15 +127,8 @@ func TestSafetyCheckerCatchesViolations(t *testing.T) {
 			}
 			hit := false
 			ast.Inspect(f, func(n ast.Node) bool {
-				switch x := n.(type) {
-				case *ast.CallExpr:
-					if sel, ok := x.Fun.(*ast.SelectorExpr); ok && (forbiddenCalls[sel.Sel.Name] || (sel.Sel.Name == "Select" && !hasReadOnlyTrue(x))) {
-						hit = true
-					}
-				case *ast.CompositeLit:
-					if isType(x.Type, "FetchItemBodySection") && !fieldIsTrue(x, "Peek") {
-						hit = true
-					}
+				if violation(n) != "" {
+					hit = true
 				}
 				return true
 			})
@@ -131,4 +137,15 @@ func TestSafetyCheckerCatchesViolations(t *testing.T) {
 			}
 		})
 	}
+	good := `package p; func f(c C) { c.Select("x", &imap.SelectOptions{ReadOnly: true, CondStore: true}); c.UIDSearch(nil, nil) }`
+	f, err := parser.ParseFile(token.NewFileSet(), "x.go", good, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ast.Inspect(f, func(n ast.Node) bool {
+		if msg := violation(n); msg != "" {
+			t.Errorf("false positive: %s", msg)
+		}
+		return true
+	})
 }

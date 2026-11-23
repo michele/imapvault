@@ -225,7 +225,7 @@ func (b *backup) backupFolder(ctx context.Context, t target) error {
 
 	infos := map[uint32]mail.MessageInfo{}
 	var server []plan.ServerMsg
-	if err := b.src.ListMessages(ctx, name, func(batch []mail.MessageInfo) error {
+	if err := b.src.ListMessages(ctx, name, 1, func(batch []mail.MessageInfo) error {
 		for _, m := range batch {
 			infos[m.UID] = m
 			server = append(server, plan.ServerMsg{UID: m.UID, Flags: m.Flags})

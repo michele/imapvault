@@ -161,13 +161,18 @@ func (s *Source) ListFolders(ctx context.Context) ([]mail.Folder, error) {
 	return out, nil
 }
 
-// Examine opens folder read-only (EXAMINE).
+// Examine opens folder read-only (EXAMINE). With CONDSTORE on the server it
+// asks for (CONDSTORE) so the reply carries HIGHESTMODSEQ. A server NO is
+// reported as mail.ErrFolderGone.
 func (s *Source) Examine(ctx context.Context, folder string) (mail.FolderState, error) {
 	if err := ctx.Err(); err != nil {
 		return mail.FolderState{}, err
 	}
-	d, err := s.c.Select(folder, &imap.SelectOptions{ReadOnly: true}).Wait()
+	d, err := s.c.Select(folder, &imap.SelectOptions{ReadOnly: true, CondStore: s.c.Caps().Has(imap.CapCondStore)}).Wait()
 	if err != nil {
+		if isServerRefusal(err) {
+			return mail.FolderState{}, fmt.Errorf("examine %q: %w", folder, mail.ErrFolderGone)
+		}
 		return mail.FolderState{}, fmt.Errorf("examine %q: %w", folder, err)
 	}
 	return mail.FolderState{
@@ -178,18 +183,66 @@ func (s *Source) Examine(ctx context.Context, folder string) (mail.FolderState, 
 	}, nil
 }
 
-// ListMessages streams UID, flags, size and internal date of every message in
-// the examined folder, in UID order. It does not read the folder into memory
-// at once: results are handed to fn listBatch at a time.
+// ListMessages streams UID, flags, size and internal date of the messages of
+// the examined folder with UID >= fromUID, in UID order. It does not read the
+// folder into memory at once: results are handed to fn listBatch at a time.
 //
 // EMAILID (RFC 8474) is not fetched: go-imap v2 beta.9 cannot request it.
-func (s *Source) ListMessages(ctx context.Context, folder string, fn func([]mail.MessageInfo) error) error {
+func (s *Source) ListMessages(ctx context.Context, folder string, fromUID uint32, fn func([]mail.MessageInfo) error) error {
+	if fromUID == 0 {
+		fromUID = 1
+	}
+	var set imap.UIDSet
+	set.AddRange(imap.UID(fromUID), 0) // fromUID:*
+	opts := &imap.FetchOptions{UID: true, Flags: true, RFC822Size: true, InternalDate: true}
+	return s.streamInfos(ctx, folder, set, opts, fromUID, 0, fn)
+}
+
+// ChangedFlags streams UID and flags of the messages with UID <= uptoUID that
+// changed after sinceModSeq: UID FETCH 1:uptoUID (UID FLAGS) (CHANGEDSINCE m).
+// Needs CONDSTORE (the engine only asks when the server has it).
+func (s *Source) ChangedFlags(ctx context.Context, folder string, uptoUID uint32, sinceModSeq uint64, fn func([]mail.MessageInfo) error) error {
+	if uptoUID == 0 {
+		return ctx.Err()
+	}
+	var set imap.UIDSet
+	set.AddRange(1, imap.UID(uptoUID))
+	opts := &imap.FetchOptions{UID: true, Flags: true, ChangedSince: sinceModSeq}
+	return s.streamInfos(ctx, folder, set, opts, 1, uptoUID, fn)
+}
+
+// UIDs returns the UIDs <= uptoUID in the examined folder (UID SEARCH).
+func (s *Source) UIDs(ctx context.Context, folder string, uptoUID uint32) ([]uint32, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if uptoUID == 0 {
+		return nil, nil
+	}
+	var set imap.UIDSet
+	set.AddRange(1, imap.UID(uptoUID))
+	data, err := s.c.UIDSearch(&imap.SearchCriteria{UID: []imap.UIDSet{set}}, nil).Wait()
+	if err != nil {
+		return nil, fmt.Errorf("search %q: %w", folder, err)
+	}
+	var out []uint32
+	for _, u := range data.AllUIDs() {
+		if u >= 1 && uint32(u) <= uptoUID {
+			out = append(out, uint32(u))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
+}
+
+// streamInfos runs one UID FETCH and hands the results to fn in batches. Only
+// UIDs in [minUID, maxUID] (maxUID 0 = no limit) are kept: "n:*" returns the
+// last message of the folder even when its UID is below n.
+func (s *Source) streamInfos(ctx context.Context, folder string, set imap.UIDSet, opts *imap.FetchOptions, minUID, maxUID uint32, fn func([]mail.MessageInfo) error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	var all imap.UIDSet
-	all.AddRange(1, 0) // 1:*
-	cmd := s.c.Fetch(all, &imap.FetchOptions{UID: true, Flags: true, RFC822Size: true, InternalDate: true})
+	cmd := s.c.Fetch(set, opts)
 	defer func() { _ = cmd.Close() }()
 
 	batch := make([]mail.MessageInfo, 0, listBatch)
@@ -213,10 +266,12 @@ func (s *Source) ListMessages(ctx context.Context, folder string, fn func([]mail
 		if err != nil {
 			return fmt.Errorf("list %q: %w", folder, err)
 		}
-		// "1:*" on an empty folder, or a lone message, can return the last
-		// message even when it is not in range; a UID of 0 means the server sent no UID.
+		// A UID of 0 means the server sent no UID.
 		if buf.UID == 0 {
 			return fmt.Errorf("list %q: server returned a message without a UID", folder)
+		}
+		if uint32(buf.UID) < minUID || (maxUID != 0 && uint32(buf.UID) > maxUID) {
+			continue
 		}
 		batch = append(batch, mail.MessageInfo{
 			UID:          uint32(buf.UID),
@@ -233,10 +288,7 @@ func (s *Source) ListMessages(ctx context.Context, folder string, fn func([]mail
 	if err := cmd.Close(); err != nil {
 		return fmt.Errorf("list %q: %w", folder, err)
 	}
-	if err := flush(); err != nil {
-		return err
-	}
-	return nil
+	return flush()
 }
 
 // FetchBodies streams the raw bytes of uids with BODY.PEEK[], so no flag (\Seen)
