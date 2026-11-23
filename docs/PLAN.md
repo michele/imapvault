@@ -283,10 +283,24 @@ to change. `internal/seal` (the only importer of age), encrypted blob envelope w
 coarse reason (safety rule 6); a test pins this. The stock `age` CLI plus `zstd -d` recovers a blob (see "Encryption"). Hybrid
 post-quantum recipients (`age1pq1...`) parse too, but age refuses to mix them with classic ones in one repository.
 
-**M2 First full backup.** `mail.Source` + imapsource (EXAMINE, BODY.PEEK, batching), engine writes
-entries + snapshot (sealing folder names and message metadata with the repository's recipients from `repo.toml`, looking
-folders up by `FolderHash`, and never calling the identity code: a backup must work with no private key), `snapshots`, `ls`, `show`, `doctor`. *Done when* a seeded dovecot mailbox backs up
-and `ls` matches the server exactly.
+**M2 First full backup (done).** `mail.Source` + `imapsource` (EXAMINE, BODY.PEEK), engine writes entries + snapshot (sealing
+folder names and message metadata with the repository's recipients from `repo.toml`, looking folders up by `FolderHash`, and
+never calling the identity code: a backup must work with no private key), `snapshots`, `ls`, `show`, `doctor`. *Done when* a
+seeded dovecot mailbox backs up and `ls` matches the server exactly.
+*Findings:* every run is already a **full rescan** (`UID FETCH 1:* (UID FLAGS RFC822.SIZE INTERNALDATE)` diffed against the open
+entries by the pure `plan.DiffMessages`), so a second run is correct and records flag changes and deletions; M3 adds the CONDSTORE/QRESYNC
+fast path in front of it, not the diff itself. go-imap v2.0.0-beta.9 cannot request EMAILID, so `blobs.emailid` stays empty and the
+EMAILID download skip needs either a newer go-imap or raw command support (M3); `doctor` says so. A folder commits in one
+transaction after its blobs are durable, so a crash leaves only orphan blobs (`check` warns, the next run reuses them), but it also
+means a killed first backup of a huge folder re-downloads that folder: per-batch commits and `partial` runs are M3. A folder that
+disappears (or is newly excluded by config) is closed *last*, after every remaining folder was read, so a failed run never records
+a deletion. A changed UIDVALIDITY fails the run for now (M3). `BeginRun` marks leftover `running` runs `failed` (the exclusive lock
+proves they are dead), and `CompleteRun` writes the run's `complete` status and its snapshot in one transaction. `backup` refuses a
+config whose `encryption.recipients` differ from `repo.toml`. `ls` and `show` print message headers to a terminal, so control
+characters are replaced; `--json` is not altered. `imapsource` has an AST test that fails on any write command, a read-write
+`SELECT`, or a body fetch without `Peek`, so rule 1 is enforced by the build. The `Tricky` seed folder (8-bit body, bare-LF
+line endings, two different messages with one Message-ID) confirms the hash is over the exact server bytes. `make itest` needs docker
+or podman (the Makefile falls back to podman).
 
 **M3 Incremental.** New UIDs, flag diff, expunges, folder new/gone/rename, UIDVALIDITY reset,
 CONDSTORE/QRESYNC fast path with fallback, EMAILID download skip, `partial` runs, `diff`.
