@@ -213,3 +213,21 @@ func TestEncryptedPutLeavesNoTmp(t *testing.T) {
 		t.Fatalf("tmp not empty: %d", len(ents))
 	}
 }
+
+func TestCorruptEncryptedObjectErrorNeverEchoesContent(t *testing.T) {
+	f := newEncFixture(t)
+	s := f.both(t)
+	k, _, _, _ := s.Put([]byte("x"))
+	// plaintext mail where ciphertext should be, behind an "encrypted" envelope byte.
+	body := append([]byte{flagZstd | flagEncrypted}, []byte("Subject: the merger is confidential\r\n\r\nbody")...)
+	if err := os.WriteFile(s.path(k), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := s.Get(k)
+	if !errors.Is(err, ErrCorrupt) {
+		t.Fatalf("want ErrCorrupt, got %v", err)
+	}
+	if strings.Contains(err.Error(), "merger") || strings.Contains(err.Error(), "Subject") {
+		t.Fatalf("error echoes object content: %v", err)
+	}
+}

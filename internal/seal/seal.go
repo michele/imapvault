@@ -158,11 +158,13 @@ func (o *Opener) Decrypt(ct []byte) ([]byte, error) {
 		if errors.As(err, &nm) {
 			return nil, ErrWrongIdentity
 		}
-		return nil, fmt.Errorf("%w: %v", ErrCorrupt, err)
+		// age's parse errors quote the first bytes of what they could not parse, which
+		// can be mail if plaintext sits where ciphertext should be. Never pass them on.
+		return nil, fmt.Errorf("%w: the age header is malformed", ErrCorrupt)
 	}
 	plain, err := io.ReadAll(r)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrCorrupt, err)
+		return nil, fmt.Errorf("%w: the encrypted payload is truncated or altered", ErrCorrupt)
 	}
 	return plain, nil
 }

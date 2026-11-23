@@ -245,3 +245,30 @@ func TestCanary(t *testing.T) {
 		t.Fatal("a canary that decrypts to the wrong value must fail")
 	}
 }
+
+func TestDecryptErrorsNeverEchoTheInput(t *testing.T) {
+	// age's parse errors quote the first bytes of data they cannot parse. If a
+	// plaintext message ends up where ciphertext is expected, those bytes are mail.
+	_, id := newKey(t)
+	o := openerFor(t, id)
+	for _, junk := range []string{
+		"Subject: the merger is confidential\r\n\r\nbody",
+		"age-encryption.org/v1\n-> X25519 SECRETSECRETSECRET\nSECRETSECRETSECRET\n--- SECRETMAC\n",
+		strings.Repeat("TOPSECRET", 50),
+	} {
+		for _, call := range []func([]byte) ([]byte, error){o.Decrypt, func(b []byte) ([]byte, error) { return o.Open(append([]byte{prefixAge}, b...)) }} {
+			_, err := call([]byte(junk))
+			if err == nil {
+				t.Fatalf("junk %q decrypted", junk[:8])
+			}
+			for _, leak := range []string{"merger", "confidential", "SECRET"} {
+				if strings.Contains(err.Error(), leak) {
+					t.Fatalf("error echoes input (%q): %v", leak, err)
+				}
+			}
+			if !errors.Is(err, ErrCorrupt) {
+				t.Fatalf("want ErrCorrupt, got %v", err)
+			}
+		}
+	}
+}
