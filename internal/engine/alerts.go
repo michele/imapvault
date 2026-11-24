@@ -62,6 +62,18 @@ func Alerts(ctx context.Context, cfg *config.Config, all bool) (*AlertsResult, e
 	return res, nil
 }
 
+// UnackedAlerts counts the guard alerts nobody has acknowledged. It needs no key
+// and never looks at a summary, so a long-running process can ask it without
+// touching an identity.
+func UnackedAlerts(cfg *config.Config) (int, error) {
+	w, err := openWriter(cfg)
+	if err != nil {
+		return 0, err
+	}
+	defer w.close()
+	return w.db.UnackedAlertCount()
+}
+
 // openWriter opens the repository for a small index write (ack, pin). It needs no
 // key: it touches only plaintext columns. The exclusive lock is non-blocking, so
 // it fails at once while a backup runs.

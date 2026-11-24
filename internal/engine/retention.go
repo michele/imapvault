@@ -90,6 +90,18 @@ func Forget(_ context.Context, cfg *config.Config, opts RetentionOptions) (*Forg
 	return rep, nil
 }
 
+// ErrUnackedAlerts is what errors.Is matches when prune refuses to run because a
+// guard alert has not been acknowledged.
+var ErrUnackedAlerts = errors.New("unacknowledged guard alerts")
+
+type unackedAlertsError struct{ n int }
+
+func (e *unackedAlertsError) Error() string {
+	return fmt.Sprintf("%d unacknowledged guard alert(s): look at `imapvault alerts`, then `imapvault ack`; prune stays off until then", e.n)
+}
+
+func (e *unackedAlertsError) Is(target error) bool { return target == ErrUnackedAlerts }
+
 // PruneReport is what prune removed (or, with DryRun, would remove).
 type PruneReport struct {
 	DryRun bool `json:"dry_run"`
@@ -132,7 +144,7 @@ func Prune(_ context.Context, cfg *config.Config, opts RetentionOptions) (*Prune
 	if n, err := w.db.UnackedAlertCount(); err != nil {
 		return nil, err
 	} else if n > 0 {
-		return nil, fmt.Errorf("%d unacknowledged guard alert(s): look at `imapvault alerts`, then `imapvault ack`; prune stays off until then", n)
+		return nil, &unackedAlertsError{n}
 	}
 
 	now := opts.Now()
