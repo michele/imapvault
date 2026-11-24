@@ -229,6 +229,7 @@ func (r *runner) forget(ctx context.Context) {
 		if rep, err = Forget(ctx, cfg, RetentionOptions{}); err == nil {
 			o.Logf("run: forget: kept %d snapshot(s), forgot %d", len(rep.Kept), len(rep.Forgotten))
 			r.remindAboutAlerts()
+			r.logNext()
 			return
 		}
 	}
@@ -243,6 +244,7 @@ func (r *runner) prune(ctx context.Context) {
 		var rep *PruneReport
 		if rep, err = Prune(ctx, cfg, RetentionOptions{}); err == nil {
 			o.Logf("run: prune: removed %d entries and %d message(s) (%s), %d snapshot(s)", rep.Entries, rep.Blobs, humanBytes(rep.BlobBytes), rep.Snapshots)
+			r.logNext()
 			return
 		}
 	}
