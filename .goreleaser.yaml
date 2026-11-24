@@ -38,6 +38,15 @@ archives:
         dst: deploy/systemd/imapvault.sysusers
       - src: deploy/systemd/user/*
         dst: deploy/systemd/user
+      # The compose bundle (docs/DEPLOY.md). The build and test overrides need a checkout, so they stay out.
+      - src: deploy/docker-compose.yml
+        dst: deploy/docker-compose.yml
+      - src: deploy/.env.example
+        dst: deploy/.env.example
+      - src: deploy/imapvault.example.toml
+        dst: deploy/imapvault.example.toml
+      - src: deploy/secrets/README.md
+        dst: deploy/secrets/README.md
 
 checksum:
   name_template: checksums.txt
