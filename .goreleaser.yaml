@@ -32,8 +32,10 @@ archives:
         dst: deploy/systemd
       - src: deploy/systemd/*.timer
         dst: deploy/systemd
+      # A src without a wildcard is copied to dst as that exact name, so dst is the
+      # file path here (a directory name would replace deploy/systemd itself).
       - src: deploy/systemd/imapvault.sysusers
-        dst: deploy/systemd
+        dst: deploy/systemd/imapvault.sysusers
       - src: deploy/systemd/user/*
         dst: deploy/systemd/user
 
