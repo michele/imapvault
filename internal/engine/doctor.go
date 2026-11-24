@@ -9,11 +9,11 @@ import (
 
 // doctorFeatures are the capabilities backup cares about and what each is for.
 var doctorFeatures = []struct{ Name, Use string }{
-	{"CONDSTORE", "fast flag-change detection (M3)"},
-	{"QRESYNC", "fast expunge detection (M3)"},
-	{"OBJECTID", "skip downloading a message already stored (M3; not fetched yet)"},
+	{"CONDSTORE", "fast flag-change detection"},
+	{"QRESYNC", "fast expunge detection"},
+	{"OBJECTID", "skip downloading a message already stored (not used yet)"},
 	{"SPECIAL-USE", "folder roles such as \\Trash and \\Sent"},
-	{"UIDPLUS", "needed by restore (M6)"},
+	{"UIDPLUS", "needed by restore"},
 }
 
 // Feature is one capability a server does or does not offer.
