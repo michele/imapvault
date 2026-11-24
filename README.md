@@ -109,6 +109,17 @@ stderr into stdout still gets valid JSON. There is no account-wide total: the se
 whole mailbox holds without reading every folder first, so the bar covers one folder at a time. `-v` adds a line per
 message (folder, UID, hash prefix; never subjects or bodies) and works with the bar.
 
+**Running continuously.** `imapvault --account personal run` stays up and does the scheduling: `--every` (default `1h`,
+at least `5m`) between backups, counted from the start of the previous one; `--forget-every` (default `24h`) applies the
+retention policy; `--prune-every` (off by default, for example `7d`) prunes, with all of prune's usual protections; and
+`--stale-after` (default `24h`) sends one notification if no backup has succeeded for that long. One job runs at a
+time and each holds the repository lock only while it runs, so a manual command works between them. A failed backup
+is retried after 30 s, 1 m, 2 m, then every 5 m. The config is read and the server dialled again for every backup, so
+a rotated password file is picked up. After a guard alert it logs, notifies and keeps going. SIGTERM stops it cleanly
+(a backup in progress is kept as a partial snapshot) with exit `0`; a config or repository that cannot be opened is
+exit `1` at once. It logs one line per event to stderr. The Docker setup in [docs/DEPLOY.md](docs/DEPLOY.md) starts it
+with `docker compose up -d`.
+
 Exit codes: `0` ok, `1` error, `2` partial backup, `3` guard alert (`3` wins when a run is both).
 
 ## Restore
@@ -191,10 +202,19 @@ on_alert = "/usr/local/bin/notify-me 'imapvault alert: {account} {summary}'"
 `{account}` and `{summary}` are put into the arguments after the program name, and the program is executed
 directly. Folder names come from the server, so a folder called `$(rm -rf ~)` reaches your notifier as plain text.
 The same values are in the environment as `IMAPVAULT_ACCOUNT`, `IMAPVAULT_SUMMARY`, `IMAPVAULT_ALERT_ID` and
-`IMAPVAULT_SNAPSHOT`; if you want a shell, ask for one: `sh -c 'notify "$IMAPVAULT_SUMMARY"'`. The command gets 60
+`IMAPVAULT_SNAPSHOT` (and `IMAPVAULT_EVENT`, `guard` or `stale`); if you want a shell, ask for one: `sh -c 'notify "$IMAPVAULT_SUMMARY"'`. The command gets 60
 seconds. If it fails the alert is still recorded and the run still exits `3`, with a warning. The summary names
 folders and counts, never subjects. The guard compares one run with the one before it, so a slow drip of deletions
-spread over many runs is not caught.
+spread over many runs is not caught, which is one reason `run` will not back up more often than every 5 minutes.
+
+**Notifications without a program.** The container image has nothing for `on_alert` to run, and a long-running `run`
+has no exit code to watch, so there is a second channel: `on_alert_url = "https://ntfy.sh/your-topic"`, or
+`on_alert_url_file = "/run/secrets/alert_url"` to keep the URL out of the config (a topic URL works like a password;
+set one of the two, not both). imapvault POSTs the summary as plain text with a `Title` header. `https` is always
+accepted; `http` only for a local address (loopback, a private or link-local IP, or a name without dots such as a
+compose service). It follows no redirects, gives up after 15 seconds, and neither the log nor any error contains the
+URL. A failed delivery is a warning, never a failed backup. `run` uses the same two channels for its "no successful
+backup for a while" notice. The URL receives folder names and counts, so choose a service you trust with that.
 
 **Server footprint.** On a server that does not track mod-sequences until a client asks (dovecot does this), the
 first `EXAMINE (CONDSTORE)` makes it start tracking them for that mailbox. No message or flag changes, but it is

@@ -4,7 +4,7 @@
 
 Back up an IMAP mailbox to a local repository (disk or NAS) with **point-in-time snapshots**,
 so that any past state of the mailbox can be inspected and restored. It is developed against
-Fastmail but works with any IMAP server. It runs as a one-shot command from cron or a systemd timer.
+Fastmail but works with any IMAP server. It runs as a one-shot command from cron or a systemd timer, or keeps itself going with `imapvault run`.
 
 The scenario it must handle: someone gets into the account, deletes everything and empties
 the trash. The next backup run notices, raises an alert, pins the last good snapshot,
@@ -67,6 +67,7 @@ deleted_grace = "180d"   # mail gone from the server stays restorable at least t
 max_deleted_percent = 10   # of messages in the previous snapshot
 max_deleted_count   = 500
 on_alert = "/usr/local/bin/notify-me 'imapvault alert: {account} {summary}'"
+# on_alert_url = "https://ntfy.sh/topic"   # or on_alert_url_file = "/run/secrets/alert_url"; a plain-text POST, for hosts with no program to run
 
 [restore]
 allow_append = false       # default. `restore` refuses to write to this account's server unless true
@@ -226,7 +227,9 @@ When it trips, in the same transaction as the snapshot (`index.CompleteRun`):
 `on_alert` is never run through a shell, because folder names come from the server. The line is split into words, `{account}`
 and `{summary}` are substituted into the words after the program name, and the program is executed directly with the same
 values in `IMAPVAULT_ACCOUNT`, `IMAPVAULT_SUMMARY`, `IMAPVAULT_ALERT_ID` and `IMAPVAULT_SNAPSHOT`. It has 60 seconds and is
-not cancelled by Ctrl-C. A failing hook is a warning: the alert is already recorded.
+not cancelled by Ctrl-C. A failing hook is a warning: the alert is already recorded. A second channel, `guard.on_alert_url` (or
+`on_alert_url_file`), POSTs the summary as plain text for hosts that cannot run a program (the container image has none); `run` also
+sends its "no successful backup for a while" notice through both, with `IMAPVAULT_EVENT=stale` for the command (see M11).
 
 ## Retention: `forget` and `prune`
 
@@ -287,6 +290,7 @@ Restore is the only command that writes to a server, and the server is the sourc
 | `keygen --out FILE` | generate an age key pair; print the recipient and a config snippet |
 | `init` | create the repository for an account (encrypted when `encryption.recipients` is set) |
 | `backup [--full]` | one backup run → snapshot. Exit 2 if it stopped partway (snapshot marked partial). `--full` lists every folder in full |
+| `run [--every 1h] [--forget-every 24h] [--prune-every 0] [--stale-after 24h]` | keep running: backup, forget and (opt-in) prune on an interval, one job at a time; keeps going after a guard alert; exits 0 when stopped |
 | `snapshots [--all]` | list snapshots (id, time, counts, pinned/flagged); `--all` includes forgotten ones |
 | `ls <snapshot> [folder]` | folders, or messages in a folder (date, from, size, hash). No bodies |
 | `show <hash>` | headers of one message. `--raw` writes the .eml to stdout |

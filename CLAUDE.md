@@ -25,6 +25,7 @@ Read `docs/PLAN.md` before starting any task. Work on one milestone at a time.
 make test          # go test ./... -race
 make lint          # go vet ./... && golangci-lint run
 make itest         # integration tests against the IMAP server in docker-compose.test.yml
+make deploy-itest  # the compose bundle in deploy/, run against the same server (needs docker or podman)
 make build         # static binary in ./bin
 ```
 
@@ -41,8 +42,8 @@ internal/objects/     content-addressed blob store: put/get/has/verify, atomic w
 internal/imaptarget/  the only code allowed to write to a server (CREATE, APPEND), fenced to an approved restore plan
 internal/index/       SQLite schema, migrations, queries (folders, entries, snapshots, alerts)
 internal/plan/        PURE functions: (index state, server listing) -> sync plan; retention policy -> keep set;
-                      guard thresholds -> alert. No I/O.
-internal/engine/      orchestration: backup, prune, restore, check
+                      guard thresholds -> alert; the run loop's next job and backoff. No I/O.
+internal/engine/      orchestration: backup, prune, restore, check, run (the scheduler), notifications
 ```
 
 `plan` must stay pure so it can be table-tested exhaustively (sync diffing, retention,

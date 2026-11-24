@@ -104,7 +104,7 @@
 
   <section id="why">
     <h2>For the bad day</h2>
-    <p>Someone gets into your account, deletes everything and empties the trash. A mirror copies that deletion. imapvault does not: the next run notices, raises an alert, pins the last good snapshot and exits with code 3. <code>imapvault restore</code> puts the mail back.</p>
+    <p>Someone gets into your account, deletes everything and empties the trash. A mirror copies that deletion. imapvault does not: the next run notices, raises an alert, pins the last good snapshot and tells you: <code>backup</code> exits with code 3, and <code>run</code> posts to a URL you set, such as an ntfy topic. <code>imapvault restore</code> puts the mail back.</p>
   </section>
 
   <section id="how">
@@ -112,11 +112,15 @@
     <ol class="steps">
       <li><code>backup</code> reads the mailbox in one read-only session and stores each distinct message once, compressed and, if you want, encrypted with <a href="https://age-encryption.org">age</a>.</li>
       <li>Every run is a <strong>snapshot</strong>: a cheap index of what was where, with flags. Moves and renames cost no extra storage.</li>
-      <li>The <strong>guard</strong> compares each run with the last one. Too many deletions, or a vanished folder, flags the snapshot, pins the previous one and runs your alert command.</li>
+      <li>The <strong>guard</strong> compares each run with the last one. Too many deletions, or a vanished folder, flags the snapshot, pins the previous one and runs your alert command or posts to a webhook.</li>
+      <li><code>run</code> does all of this on a schedule: it backs up every hour, applies the retention policy daily, retries failures, keeps going after an alert and tells you if backups stop working. It prunes only if you ask.</li>
       <li><code>forget</code> and <code>prune</code> apply a retention policy. Mail deleted from the server stays restorable for 180 days by default, and pins and open alerts always win.</li>
       <li><code>restore</code> shows exactly what it would add, then waits for a plan token you copy from the preview.</li>
     </ol>
-<pre><code><span class="c"># every hour, from cron or a systemd timer</span>
+<pre><code><span class="c"># keep it going: back up hourly, tidy daily, alert if something is wrong</span>
+imapvault --account personal run
+
+<span class="c"># or one backup at a time, from cron or a systemd timer</span>
 imapvault --account personal backup
 
 <span class="c"># what changed between two snapshots</span>
@@ -132,7 +136,7 @@ imapvault --account personal restore --deleted-since 7d --in-place</code></pre>
       <li>Backup is read-only on your server: <code>EXAMINE</code> and <code>BODY.PEEK[]</code>, and a test fails the build on any write command.</li>
       <li>Restore only creates folders and appends messages. It never deletes, moves or re-flags anything, and needs <code>allow_append = true</code> in the target account's config plus an approved plan token.</li>
       <li>Backup never needs your private key. A cron job or NAS with only the public key can back up, prune and verify, and cannot read a single message.</li>
-      <li>Only <code>prune</code> removes data from the repository, and it honours pins, the grace period and unacknowledged alerts.</li>
+      <li>Only <code>prune</code> removes data from the repository, and it honours pins, the grace period and unacknowledged alerts. <code>run</code> never prunes unless you pass <code>--prune-every</code>.</li>
       <li>It never logs message bodies, subjects or credentials.</li>
     </ul>
   </section>
@@ -141,12 +145,12 @@ imapvault --account personal restore --deleted-since 7d --in-place</code></pre>
     <h2>Install</h2>
     <p>One static binary for Linux and macOS, on amd64 and arm64. The script checks the download against the published checksums before it installs anything, and puts <code>imapvault</code> in <code>~/.local/bin</code>.</p>
 <pre><code>curl -fsSL https://imapvault.sh/install.sh | sh</code></pre>
-    <p style="margin-top:1rem" class="muted">Or <code>brew install michele/imapvault/imapvault</code>, or the container image <code>ghcr.io/michele/imapvault</code>. Prefer to read the script first? <a href="install.sh">install.sh</a> is short. You can also take an archive from the <a href="https://github.com/michele/imapvault/releases">releases page</a>. The macOS binaries are not signed, so Gatekeeper refuses the first run: <code>xattr -d com.apple.quarantine imapvault</code>. To run it on a schedule, see the <a href="https://github.com/michele/imapvault/blob/main/docs/SCHEDULING.md">systemd units and cron notes</a> or the <a href="https://github.com/michele/imapvault/blob/main/docs/DEPLOY.md">Docker guide</a>.</p>
+    <p style="margin-top:1rem" class="muted">Or <code>brew install michele/imapvault/imapvault</code>, or the container image <code>ghcr.io/michele/imapvault</code>. Prefer to read the script first? <a href="install.sh">install.sh</a> is short. You can also take an archive from the <a href="https://github.com/michele/imapvault/releases">releases page</a>. The macOS binaries are not signed, so Gatekeeper refuses the first run: <code>xattr -d com.apple.quarantine imapvault</code>. To keep it running, use <code>imapvault run</code>. The <a href="https://github.com/michele/imapvault/blob/main/docs/DEPLOY.md">Docker guide</a> has a Compose file that starts it with <code>docker compose up -d</code>, with a NAS in mind; for cron or systemd timers see the <a href="https://github.com/michele/imapvault/blob/main/docs/SCHEDULING.md">scheduling notes</a>.</p>
   </section>
 
   <section id="status">
     <h2>Status</h2>
-    <p>Version 0.1, alpha. Backup has run against a dovecot test server and a Fastmail mailbox. Restore has only been run against the test server, so try it on a throwaway account before you point it at a mailbox you care about.</p>
+    <p>Version 0.3, alpha. Backup has run against a dovecot test server, a Fastmail mailbox and, in Docker, a NAS. The scheduler, <code>imapvault run</code>, is new: it has been watched for minutes against the test server, not for days. Restore has only been run against the test server, so try it on a throwaway account before you point it at a mailbox you care about.</p>
     <p>Use it at your own risk. It is released under the MIT licence with no warranty, and a backup you have never restored is a hope, not a backup.</p>
     <p class="muted" style="margin-bottom:0">What is and is not verified is listed milestone by milestone in <a href="https://github.com/michele/imapvault/blob/main/docs/PLAN.md">the plan</a>.</p>
   </section>

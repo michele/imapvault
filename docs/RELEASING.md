@@ -1,6 +1,6 @@
 # Releasing
 
-1. Merge to `main` and wait for CI to be green (`make test lint itest` locally as well).
+1. Merge to `main` and wait for CI to be green (`make test lint itest deploy-itest` locally as well).
 2. Check what will ship: `make release-snapshot`, then look in `dist/` (archives, `checksums.txt`,
    `homebrew/imapvault.rb`) and run the archive's binary with `--version`.
 3. Tag from that commit and push the tag: `git tag v0.1.0 && git push origin v0.1.0`.
