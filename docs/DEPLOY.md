@@ -366,8 +366,10 @@ Tested: a `stop` in the middle of a 25,000-message folder returned in 0.2 s (wel
 
 ### Resources
 
-`mem_limit: 1g` and `GOMEMLIMIT: 700MiB` are guesses, not measurements of a large real mailbox: a message is held
-in memory while it is hashed, and a full folder listing is held while it is compared. `GOMEMLIMIT` makes the Go
+`mem_limit: 1g` and `GOMEMLIMIT: 700MiB` were chosen before measuring. The maintainer's first backup of a real
+mailbox (about 100,000 messages, 20 GiB) stayed at roughly 360 MB the whole time, reported from memory and not
+recorded, so the limits have room. A message is held in memory while it is hashed, and a full folder listing is
+held while it is compared, so a mailbox with very large attachments or far more messages may need more. `GOMEMLIMIT` makes the Go
 runtime collect garbage harder before it reaches the container limit (Go does not size its heap to the cgroup on
 its own). If a run is OOM-killed (`docker inspect` shows `OOMKilled: true`), raise both together.
 
@@ -462,8 +464,8 @@ The backup path is read-only on the mail server: folders are opened with `EXAMIN
   unit are written from their documentation, not run. The maintainer ran the v0.2.0 image on a NAS and reported
   the progress output looked right; nothing from that run was recorded here.
 - **Docker Engine itself** (as opposed to Podman behind the Docker Compose CLI), and **Compose v1**.
-- **A real provider in the container for hours**: memory and run time on a large mailbox, including the memory
-  limit.
+- **A real provider in the container**: one first backup (about 100,000 messages) ran on the maintainer's NAS and
+  stayed near 360 MB; nothing from it was recorded here, and larger mailboxes were not tried.
 - **`-t` or `tty: true`** giving the live bar inside a container (the bar was checked in a pseudo-terminal on the host).
 - **arm64 hardware**: the image is built for both architectures; it was run here only on the host's.
 - **NFS/SMB `flock`**: network filesystems remain unsupported.

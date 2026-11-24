@@ -504,7 +504,8 @@ works without `-T` (compose v2); real errors quoted in the guide for an unreadab
 VM's own filesystem, because a macOS bind mount does not enforce ownership), for the repository lock (a second run exits 1 while the first
 is going), and a SIGTERM mid-folder returns in 0.2 s and the next run resumes; the multi-account snippet renders. *Not verified:* Docker
 Engine and Compose v1 (Podman behind the Compose v2 CLI here), Synology Container Manager and Task Scheduler, Portainer, the systemd
-snippet, the memory limit on a large mailbox, `-t` giving the bar in a container, arm64 hardware.
+snippet, `-t` giving the bar in a container, arm64 hardware. *Reported by the maintainer, not recorded:* a real first backup (about 100,000 messages, 20 GiB, about 3 hours)
+finished on their NAS with the container steady near 360 MB, so the 1 GiB limit has room.
 
 ## Testing
 
