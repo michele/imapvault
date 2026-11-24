@@ -137,6 +137,9 @@ func Backup(ctx context.Context, cfg *config.Config, src mail.Source, opts Backu
 	if _, err := parseHook(cfg.Guard.OnAlert); err != nil {
 		return nil, err
 	}
+	if _, _, err := cfg.AlertURL(); err != nil {
+		return nil, err
+	}
 	acct := accountOf(cfg)
 	r, err := repo.Open(cfg.Repository.Path, &acct)
 	if err != nil {

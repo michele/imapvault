@@ -176,7 +176,7 @@ func printAlert(out io.Writer, rep *engine.BackupReport, account string) {
 	}
 	_, _ = fmt.Fprintf(out, "\n  acknowledge:       %s\n", withAccount(account, fmt.Sprintf("ack %d", a.ID)))
 	if a.HookError != "" {
-		_, _ = fmt.Fprintf(out, "  guard.on_alert failed: %s\n", clean(a.HookError))
+		_, _ = fmt.Fprintf(out, "  notification failed: %s\n", clean(a.HookError))
 	}
 }
 

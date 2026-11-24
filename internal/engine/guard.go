@@ -108,27 +108,22 @@ func (b *backup) summarize(res plan.GuardResult, per map[int64]plan.FolderDiff, 
 	return sb.String()
 }
 
-// notify runs guard.on_alert, if configured. A failing hook never fails the run:
-// the alert is already recorded, so it is reported as a warning.
+// notify sends the alert through guard.on_alert and guard.on_alert_url. A failing
+// notification never fails the run: the alert is already recorded, so it is
+// reported as a warning and in the alert's HookError.
 func (b *backup) notify(ctx context.Context, ar *AlertReport) {
-	words, err := parseHook(b.cfg.Guard.OnAlert)
-	if err != nil || words == nil {
-		return // validated before the run; nothing to do
-	}
-	account := b.cfg.Account
-	if account == "" {
-		account = b.cfg.IMAP.Username
-	}
-	argv := hookArgs(words, account, ar.Summary)
-	env := []string{
-		"IMAPVAULT_ACCOUNT=" + account,
-		"IMAPVAULT_SUMMARY=" + ar.Summary,
-		fmt.Sprintf("IMAPVAULT_ALERT_ID=%d", ar.ID),
-		fmt.Sprintf("IMAPVAULT_SNAPSHOT=%d", b.rep.Snapshot),
-	}
 	// Ctrl-C cancelled the run's context, but the alert still has to go out.
-	if err := runHook(context.WithoutCancel(ctx), argv, env); err != nil {
-		ar.HookError = err.Error()
-		b.warn("guard.on_alert failed: %v", err)
+	cmdErr, urlErr := Notify(context.WithoutCancel(ctx), b.cfg, Notification{
+		Event: EventGuard, Summary: ar.Summary, AlertID: ar.ID, Snapshot: b.rep.Snapshot,
+	})
+	var failed []string
+	if cmdErr != nil {
+		b.warn("guard.on_alert failed: %v", cmdErr)
+		failed = append(failed, cmdErr.Error())
 	}
+	if urlErr != nil {
+		b.warn("%v", urlErr)
+		failed = append(failed, urlErr.Error())
+	}
+	ar.HookError = strings.Join(failed, "; ")
 }
