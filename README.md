@@ -11,8 +11,8 @@ An open-source IMAP backup tool: point-in-time **snapshots** of a mailbox in a l
 repository, a grace period for deleted mail, mass-deletion alerts, and restore of any
 snapshot, folder or message back to an IMAP server.
 
-**Status: alpha, heading for v0.1.0.** From v0.1.0 the on-disk format is frozen: a later change to it ships a migration or a
-clear refusal. Everything is tested against a dovecot test server, and a read-only backup has run against a real Fastmail mailbox. Restore has only been run against the test server: try it on a throwaway account first (see [Restore](#restore)).
+**Status: alpha, a brand new project.** The on-disk format has been frozen since v0.1.0: a later change to it ships a migration or a
+clear refusal. Everything is tested against a dovecot test server, and read-only backups have run against real Fastmail and Gmail mailboxes; it should work with most IMAP providers. Restore has only been run against the test server: try it on a throwaway account first (see [Restore](#restore)).
 Design and decisions: [docs/PLAN.md](docs/PLAN.md).
 
 ## Install
@@ -49,6 +49,15 @@ read or restore mail, and keep a second, offline recovery key. Exit code `3` mea
 
 One TOML file per account in `$XDG_CONFIG_HOME/imapvault/<account>.toml`, selected with
 `--account NAME`. See [examples/](examples/). `imapvault accounts` lists them.
+
+**Gmail.** Gmail shows labels as folders, so a message with three labels sits in four places: each label plus
+`[Gmail]/All Mail`. Do **not** exclude `[Gmail]/All Mail`. Archived mail (the Inbox label removed) exists only
+there, so leaving it out would miss it, and archiving a lot of mail at once would look like a mass deletion to
+the guard. Storage is not the cost: a message is stored once however many folders hold it. The cost is time and
+quota: imapvault downloads the body once per folder position and only then sees it is a duplicate, so a first
+backup downloads a message as many times as it has places, and Gmail limits how much IMAP data one account can
+download per day. A big first backup may need several resumed runs (`run` does this by itself). Excluding
+`[Gmail]/Spam` is safe; think twice before excluding `[Gmail]/Trash`, which is where deletions land.
 
 ## Commands
 

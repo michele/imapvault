@@ -554,8 +554,14 @@ was sent to an external service), Docker Engine, Synology's view of a long-runni
   (newest 7 kept) is the answer; the limit is documented in the README (an index copy older than the last prune can
   reference deleted objects). A journal that rebuilds the index from the repository alone would make prune more
   complex; revisit if someone loses an index.
-- **Gmail.** Labels show up as folders, so blobs dedupe for free. Should we default-exclude `[Gmail]/All Mail`,
-  or back up only All Mail plus `X-GM-LABELS`? Not needed for Fastmail; decide when someone asks.
+- **Gmail.** Labels show up as folders, so *storage* dedupes for free (one blob per SHA-256), but every position is still
+  downloaded: a message in the Inbox, All Mail and two labels is fetched four times, and Gmail caps IMAP download volume
+  per day. **Do not default-exclude `[Gmail]/All Mail`**: archived mail (Inbox label removed) exists only there, and with
+  it excluded a bulk archive would read as a mass deletion (the messages leave the Inbox and appear nowhere the backup
+  looks), trip the guard, and be pruned after the grace period. Excluding Spam is safe; Trash is where deletions land.
+  Open: avoid the duplicate downloads by asking Gmail for `X-GM-MSGID` (the analogue of EMAILID) and skipping bodies we
+  already hold, or by backing up only All Mail plus `X-GM-LABELS`, which needs the label membership stored. Neither
+  exists yet; the first Gmail runs are the evidence for whether it is worth building.
 - **Shared code with quietbox** (config, password sources, IMAP dialing): copy now, extract a module once both are stable.
 
 ## Later
