@@ -1,7 +1,7 @@
 # Running imapvault on a schedule
 
 imapvault is a one-shot command: `backup` makes one snapshot and exits. Run it from systemd timers or cron.
-(For a container, see [DOCKER.md](DOCKER.md).) Run it hourly if you like: a folder the server reports as
+(For a container, see [DEPLOY.md](DEPLOY.md): a compose file where the scheduled command is `docker compose run --rm -T backup`.) Run it hourly if you like: a folder the server reports as
 unchanged costs one `EXAMINE`.
 
 The repository lock makes overlap harmless. A second `backup` that starts while one is running exits at once
@@ -154,7 +154,7 @@ systemctl edit imapvault-backup@fastmail.service
 ```
 
 Do the same for `imapvault-prune@fastmail.service`. The repository lock uses `flock(2)`; check that your
-network filesystem supports it before putting a repository on NFS or SMB (see "NAS notes" in DOCKER.md).
+network filesystem supports it before putting a repository on NFS or SMB (see "NAS notes" in DEPLOY.md).
 
 ### No root: a user service
 

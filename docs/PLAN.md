@@ -488,6 +488,24 @@ bar, a folder's summary appears twice (the engine's log line and the renderer's)
 next run fetched exactly the remainder), and the image run detached with `podman logs`. *Not verified:* the bar in terminal emulators
 other than a pty, `-t` in a container, a multi-GB first run on a real server.
 
+**M10 Docker deployment (done).** `deploy/`: `docker-compose.yml` (one service per command; `backup` is what `up` runs, `init`, `forget`,
+`prune`, `check` and a free-form `imapvault` are in a `tools` profile), `docker-compose.build.yml`, `.env.example`, `imapvault.example.toml`,
+`secrets/README.md`; `docs/DEPLOY.md` replaces `docs/DOCKER.md` and follows quietbox's guide. imapvault is one-shot, so scheduling stays on
+the host (cron, a systemd timer, Synology Task Scheduler); a `run` loop command is a separate, later task.
+*Decisions:* the command is fixed in `entrypoint`, not `command`, so `docker compose run --rm prune --dry-run` appends to it instead of
+replacing it; `--progress` is not set (auto gives the bar under `run` and plain lines under `up`, cron and `logs`); the host keeps
+`config/NAME.toml` flat and compose mounts the folder at `/config/imapvault`, because `--account NAME` reads `$XDG_CONFIG_HOME/imapvault/NAME.toml`
+and the image sets `XDG_CONFIG_HOME=/config` (a file put in `/config` was the first thing that went wrong on the NAS). A missing account
+config now says where it expected the file and, in a container, what to mount. `[guard] on_alert` cannot work in the image (it runs a
+program directly and the image has none), so the guide says to act on exit code 3 from the host scheduler.
+*Verified:* `make deploy-itest` drives the real compose file against dovecot (config, init, `up` twice, appended arguments, free-form
+command, exit code 1 on a wrong password, the misplaced-config message, the missing-account refusal); `docker compose run` with no terminal
+works without `-T` (compose v2); real errors quoted in the guide for an unreadable secret and an unwritable repository (produced on the
+VM's own filesystem, because a macOS bind mount does not enforce ownership), for the repository lock (a second run exits 1 while the first
+is going), and a SIGTERM mid-folder returns in 0.2 s and the next run resumes; the multi-account snippet renders. *Not verified:* Docker
+Engine and Compose v1 (Podman behind the Compose v2 CLI here), Synology Container Manager and Task Scheduler, Portainer, the systemd
+snippet, the memory limit on a large mailbox, `-t` giving the bar in a container, arm64 hardware.
+
 ## Testing
 
 - Unit: `plan` (sync diff, guard, retention) as table tests. Blob store and index with temp dirs.

@@ -20,7 +20,7 @@ Design and decisions: [docs/PLAN.md](docs/PLAN.md).
 ```sh
 brew install michele/imapvault/imapvault                       # macOS, Linux
 curl -fsSL https://imapvault.sh/install.sh | sh   # into ~/.local/bin, checksum verified
-docker pull ghcr.io/michele/imapvault                          # see docs/DOCKER.md
+docker pull ghcr.io/michele/imapvault                          # see docs/DEPLOY.md
 ```
 
 Or take the tarball for your platform (linux and macOS, amd64 and arm64) from the
@@ -39,7 +39,7 @@ imapvault --account personal snapshots
 ```
 
 Then run `backup` on a schedule (systemd timer, cron or a container: [docs/SCHEDULING.md](docs/SCHEDULING.md),
-[docs/DOCKER.md](docs/DOCKER.md)) and `forget` + `prune` weekly. A machine that only runs the schedule needs
+[docs/DEPLOY.md](docs/DEPLOY.md)) and `forget` + `prune` weekly. A machine that only runs the schedule needs
 the public keys only ([examples/backup-only.toml](examples/backup-only.toml)); keep the private key where you
 read or restore mail, and keep a second, offline recovery key. Exit code `3` means the guard saw a mass deletion.
 

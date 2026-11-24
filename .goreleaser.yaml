@@ -27,7 +27,7 @@ archives:
       - SECURITY.md
       - examples/*
       - docs/SCHEDULING.md
-      - docs/DOCKER.md
+      - docs/DEPLOY.md
       - src: deploy/systemd/*.service
         dst: deploy/systemd
       - src: deploy/systemd/*.timer

@@ -5,7 +5,7 @@
 # imapvault container image: one static binary on distroless, running as nonroot (65532).
 # imapvault is a one-shot tool, so the image has no default command: every run says
 # `--account NAME backup` (or another command). No config, password, key or repository
-# is baked in: mount /config (read-only) and /repo. See docs/DOCKER.md.
+# is baked in: mount /config (read-only) and /repo. See docs/DEPLOY.md.
 #
 # The build stage runs on the build machine's own platform and cross-compiles
 # (pure Go, CGO off), so a multi-arch build needs no QEMU:
