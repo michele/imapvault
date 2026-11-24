@@ -54,6 +54,24 @@ func TestRunRejectsBadFlagsBeforeTouchingAnything(t *testing.T) {
 	}
 }
 
+func TestMinEveryIsAHiddenOverrideForTestsAndDemos(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// 1m is refused by default, and allowed once --min-every says so (the config
+	// is missing, so the error moves on from the schedule to the config).
+	_, err := execRoot(t, "--account", "x", "run", "--every", "1m")
+	if err == nil || !strings.Contains(err.Error(), "too short") {
+		t.Fatalf("got %v", err)
+	}
+	_, err = execRoot(t, "--account", "x", "run", "--every", "1m", "--min-every", "30s")
+	if err == nil || strings.Contains(err.Error(), "too short") {
+		t.Fatalf("--min-every did not lower the floor: %v", err)
+	}
+	out, _ := execRoot(t, "run", "--help")
+	if strings.Contains(out, "min-every") {
+		t.Error("--min-every is for tests and demos and should stay out of --help")
+	}
+}
+
 func TestRunIsDocumented(t *testing.T) {
 	out, err := execRoot(t, "run", "--help")
 	if err != nil {

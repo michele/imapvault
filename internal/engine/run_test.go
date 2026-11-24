@@ -212,7 +212,7 @@ func TestRunTellsOnceWhenBackupsHaveBeenFailingForTooLong(t *testing.T) {
 	if posts.Load() != 1 {
 		t.Fatalf("%d notifications, want exactly one per streak\n%s", posts.Load(), h.logged())
 	}
-	if got, _ := body.Load().(string); !strings.Contains(got, "no successful backup") || !strings.Contains(got, "no route to host") {
+	if got, _ := body.Load().(string); !strings.Contains(got, "no successful backup for 1h") || !strings.Contains(got, "no route to host") {
 		t.Errorf("notification body %q", got)
 	}
 	if strings.Contains(h.logged(), topic) {
@@ -305,5 +305,17 @@ func TestRunRefusesToStartWhenTheConfigDoesNotLoadOnline(t *testing.T) {
 	_ = h
 	if err == nil || !strings.Contains(err.Error(), "permission denied") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestHumanDuration(t *testing.T) {
+	for in, want := range map[time.Duration]string{
+		0: "0s", -time.Second: "0s", 400 * time.Millisecond: "0s", 15 * time.Second: "15s", 59*time.Second + 600*time.Millisecond: "1m",
+		time.Minute: "1m", 90 * time.Second: "1m30s", 12 * time.Minute: "12m", time.Hour: "1h", time.Hour + 5*time.Minute: "1h05m",
+		24 * time.Hour: "24h", 24*time.Hour + 30*time.Minute: "24h30m",
+	} {
+		if got := humanDuration(in); got != want {
+			t.Errorf("humanDuration(%v) = %q, want %q", in, got, want)
+		}
 	}
 }

@@ -87,7 +87,7 @@ func Run(ctx context.Context, o RunOptions) error {
 	}
 
 	r := &runner{o: o, st: plan.RunState{Started: o.Now()}}
-	o.Logf("run: started: backup every %s, forget %s, prune %s", o.Schedule.Every, every(o.Schedule.ForgetEvery), every(o.Schedule.PruneEvery))
+	o.Logf("run: started: backup every %s, forget %s, prune %s", humanDuration(o.Schedule.Every), every(o.Schedule.ForgetEvery), every(o.Schedule.PruneEvery))
 	r.remindAboutAlerts()
 	for {
 		if ctx.Err() != nil {
@@ -117,7 +117,29 @@ func every(d time.Duration) string {
 	if d <= 0 {
 		return "off"
 	}
-	return "every " + d.String()
+	return "every " + humanDuration(d)
+}
+
+// humanDuration writes 15s, 1m30s, 12m, 1h05m, 24h: whole seconds under a
+// minute, minutes under an hour, hours and minutes after that.
+func humanDuration(d time.Duration) string {
+	secs := int(d.Round(time.Second) / time.Second)
+	switch {
+	case secs <= 0:
+		return "0s"
+	case secs < 60:
+		return fmt.Sprintf("%ds", secs)
+	case secs < 3600:
+		if secs%60 == 0 {
+			return fmt.Sprintf("%dm", secs/60)
+		}
+		return fmt.Sprintf("%dm%02ds", secs/60, secs%60)
+	}
+	h, m := secs/3600, secs%3600/60
+	if m == 0 {
+		return fmt.Sprintf("%dh", h)
+	}
+	return fmt.Sprintf("%dh%02dm", h, m)
 }
 
 type runner struct {
@@ -129,7 +151,7 @@ type runner struct {
 func (r *runner) logNext() {
 	job, wait := plan.NextJob(r.o.Schedule, r.st, r.o.Now())
 	if wait > 0 {
-		r.o.Logf("run: next %s in %s", job, wait.Round(time.Second))
+		r.o.Logf("run: next %s in %s", job, humanDuration(wait))
 	}
 }
 
@@ -147,14 +169,14 @@ func (r *runner) backup(ctx context.Context) {
 	switch {
 	case errors.Is(err, repo.ErrLocked):
 		r.st.Busy = true
-		o.Logf("run: backup busy: another imapvault command holds the repository; retrying in %s", time.Minute)
+		o.Logf("run: backup busy: another imapvault command holds the repository; retrying in %s", humanDuration(time.Minute))
 		return
 	case err != nil:
 		r.st.Busy = false
 		r.st.Failures++
 		r.lastErr = cleanText(err.Error())
 		_, wait := plan.NextJob(o.Schedule, r.st, end)
-		o.Logf("run: backup failed: %s; retrying in %s", r.lastErr, wait.Round(time.Second))
+		o.Logf("run: backup failed: %s; retrying in %s", r.lastErr, humanDuration(wait))
 		r.tellIfStale(ctx)
 		return
 	}
@@ -162,7 +184,7 @@ func (r *runner) backup(ctx context.Context) {
 	r.st.Failures = 0
 	r.st.StaleNotified = false
 	r.st.LastBackupOK = end
-	took := end.Sub(start).Round(time.Second)
+	took := humanDuration(end.Sub(start))
 	state := "done"
 	if rep.Partial() {
 		state = "partial (the next run continues)"
@@ -205,7 +227,7 @@ func (r *runner) tellIfStale(ctx context.Context) {
 	if since.IsZero() {
 		since = r.st.Started
 	}
-	summary := fmt.Sprintf("no successful backup for %s; last error: %s", r.o.Now().Sub(since).Round(time.Minute), r.lastErr)
+	summary := fmt.Sprintf("no successful backup for %s; last error: %s", humanDuration(r.o.Now().Sub(since)), r.lastErr)
 	r.o.Logf("run: WARNING: %s", summary)
 	cfg, err := r.o.LoadOffline()
 	if err != nil {

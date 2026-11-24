@@ -36,7 +36,7 @@ func parseInterval(s string) (time.Duration, error) {
 }
 
 func newRunCmd(opts *options) *cobra.Command {
-	var every, forgetEvery, pruneEvery, staleAfter, progress string
+	var every, forgetEvery, pruneEvery, staleAfter, progress, minEvery string
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Keep running: back up on an interval, forget old snapshots, optionally prune",
@@ -77,7 +77,11 @@ like 15m, 1h, 24h, 7d; 0 turns forget, prune or the stale warning off.`,
 				}
 				*f.dst = d
 			}
-			if err := sched.Validate(minRunEvery); err != nil {
+			floor, err := parseInterval(minEvery)
+			if err != nil {
+				return fmt.Errorf("--min-every: %w", err)
+			}
+			if err := sched.Validate(floor); err != nil {
 				return err
 			}
 			if progress != "log" && progress != "none" {
@@ -114,5 +118,8 @@ like 15m, 1h, 24h, 7d; 0 turns forget, prune or the stale warning off.`,
 	cmd.Flags().StringVar(&pruneEvery, "prune-every", "0", "also prune this often (needs --forget-every); 0, the default, never prunes")
 	cmd.Flags().StringVar(&staleAfter, "stale-after", "24h", "send a notification when no backup has succeeded for this long; 0 turns it off")
 	cmd.Flags().StringVar(&progress, "progress", "log", "per-folder progress lines: log or none")
+	// For tests and demos only: lowers the floor of --every. Hidden on purpose.
+	cmd.Flags().StringVar(&minEvery, "min-every", minRunEvery.String(), "")
+	_ = cmd.Flags().MarkHidden("min-every")
 	return cmd
 }
