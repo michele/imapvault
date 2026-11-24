@@ -126,6 +126,10 @@ type Guard struct {
 	MaxDeletedPercent float64 `toml:"max_deleted_percent"`
 	MaxDeletedCount   int     `toml:"max_deleted_count"`
 	OnAlert           string  `toml:"on_alert"`
+	// OnAlertURL or OnAlertURLFile (not both) is a URL that gets a plain-text POST
+	// when an alert trips; see alerturl.go.
+	OnAlertURL     string `toml:"on_alert_url"`
+	OnAlertURLFile string `toml:"on_alert_url_file"`
 }
 
 func defaultGuard() Guard { return Guard{MaxDeletedPercent: 10, MaxDeletedCount: 500} }
@@ -393,6 +397,7 @@ func (c *Config) validateGuard(add func(string, ...any)) {
 	if g.MaxDeletedCount < 0 {
 		add("guard.max_deleted_count must not be negative (got %d); 0 turns it off", g.MaxDeletedCount)
 	}
+	c.validateAlertURL(add)
 }
 
 func isLoopback(host string) bool {
