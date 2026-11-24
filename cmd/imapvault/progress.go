@@ -30,10 +30,15 @@ const (
 )
 
 // resolveProgressMode turns the --progress flag into a mode. "auto" is the live
-// bar on a terminal and plain lines otherwise (or when TERM=dumb).
-func resolveProgressMode(flag string, isTerm bool, getenv func(string) string) (progressMode, error) {
+// bar on a terminal and plain lines otherwise (or when TERM=dumb). With --json a
+// program is reading the output, often with stderr merged in, so "auto" shows
+// nothing; asking for bar or log explicitly still works.
+func resolveProgressMode(flag string, isTerm, jsonOut bool, getenv func(string) string) (progressMode, error) {
 	switch flag {
 	case "", "auto":
+		if jsonOut {
+			return progressNone, nil
+		}
 		if isTerm && getenv("TERM") != "dumb" {
 			return progressBar, nil
 		}

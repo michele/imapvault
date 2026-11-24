@@ -226,23 +226,30 @@ func TestResolveProgressMode(t *testing.T) {
 	pipe := &bytes.Buffer{}
 
 	cases := []struct {
-		flag   string
-		isTerm bool
-		env    func(string) string
-		want   progressMode
-		bad    bool
+		flag    string
+		isTerm  bool
+		jsonOut bool
+		env     func(string) string
+		want    progressMode
+		bad     bool
 	}{
-		{"auto", true, tty, progressBar, false},
-		{"auto", false, tty, progressLog, false},
-		{"auto", true, dumb, progressLog, false},
-		{"", true, tty, progressBar, false},
-		{"bar", false, tty, progressBar, false},
-		{"log", true, tty, progressLog, false},
-		{"none", true, tty, progressNone, false},
-		{"fancy", true, tty, 0, true},
+		{"auto", true, false, tty, progressBar, false},
+		{"auto", false, false, tty, progressLog, false},
+		{"auto", true, false, dumb, progressLog, false},
+		{"", true, false, tty, progressBar, false},
+		{"bar", false, false, tty, progressBar, false},
+		{"log", true, false, tty, progressLog, false},
+		{"none", true, false, tty, progressNone, false},
+		{"fancy", true, false, tty, 0, true},
+		// --json means a machine reads the output, often with stderr merged in:
+		// auto stays quiet, an explicit choice is honoured.
+		{"auto", true, true, tty, progressNone, false},
+		{"auto", false, true, tty, progressNone, false},
+		{"log", false, true, tty, progressLog, false},
+		{"bar", true, true, tty, progressBar, false},
 	}
 	for _, c := range cases {
-		got, err := resolveProgressMode(c.flag, c.isTerm, c.env)
+		got, err := resolveProgressMode(c.flag, c.isTerm, c.jsonOut, c.env)
 		if c.bad != (err != nil) || (!c.bad && got != c.want) {
 			t.Errorf("%+v: got %v, %v", c, got, err)
 		}

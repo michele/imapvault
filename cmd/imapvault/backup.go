@@ -94,7 +94,7 @@ Exit codes: 0 ok, 1 error, 2 partial, 3 guard alert.`,
 			defer func() { _ = src.Close() }()
 			bo := engine.BackupOptions{Full: full}
 			errw := cmd.ErrOrStderr()
-			mode, err := resolveProgressMode(progress, isTerminalFile(errw), os.Getenv)
+			mode, err := resolveProgressMode(progress, isTerminalFile(errw), opts.json, os.Getenv)
 			if err != nil {
 				return err
 			}
@@ -125,7 +125,7 @@ Exit codes: 0 ok, 1 error, 2 partial, 3 guard alert.`,
 			return backupExitError(rep)
 		},
 	}
-	cmd.Flags().StringVar(&progress, "progress", "auto", "progress display on stderr: auto (live bar on a terminal, plain lines otherwise), bar, log or none")
+	cmd.Flags().StringVar(&progress, "progress", "auto", "progress display on stderr: auto (live bar on a terminal, plain lines otherwise, nothing with --json), bar, log or none")
 	cmd.Flags().BoolVar(&full, "full", false, "list every folder in full instead of trusting what the server says changed")
 	return cmd
 }
