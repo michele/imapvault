@@ -27,8 +27,9 @@
     <h1>Every state of your mailbox, kept safe.</h1>
     <p class="lede">Open-source IMAP backup with point-in-time snapshots. imapvault keeps deleted mail for a grace period, notices when a mass deletion happens, and restores any snapshot, folder or message.</p>
     <div class="links">
-      <a href="https://github.com/michele/imapvault">GitHub</a>
+      <a href="/guide/">Getting started</a>
       <a href="#install">Install</a>
+      <a href="https://github.com/michele/imapvault">GitHub</a>
       <a href="https://github.com/michele/imapvault/blob/main/docs/PLAN.md">Design</a>
     </div>
   </header>
@@ -59,6 +60,7 @@ imapvault --account personal diff latest~1 latest
 
 <span class="c"># undo the hack: preview first, then approve with the token it prints</span>
 imapvault --account personal restore --deleted-since 7d --in-place</code></pre>
+    <p class="next"><a href="/guide/">Follow the getting started guide &rarr;</a></p>
   </section>
 
   <section id="safety">
@@ -79,6 +81,17 @@ imapvault --account personal restore --deleted-since 7d --in-place</code></pre>
     <p style="margin-top:1rem" class="muted">Or <code>brew install michele/imapvault/imapvault</code>, or the container image <code>ghcr.io/michele/imapvault</code>. Prefer to read the script first? <a href="install.sh">install.sh</a> is short. You can also take an archive from the <a href="https://github.com/michele/imapvault/releases">releases page</a>. The macOS binaries are not signed, so Gatekeeper refuses the first run: <code>xattr -d com.apple.quarantine imapvault</code>. To keep it running, use <code>imapvault run</code>. The <a href="https://github.com/michele/imapvault/blob/main/docs/DEPLOY.md">Docker guide</a> has a Compose file that starts it with <code>docker compose up -d</code>, with a NAS in mind; for cron or systemd timers see the <a href="https://github.com/michele/imapvault/blob/main/docs/SCHEDULING.md">scheduling notes</a>.</p>
   </section>
 
+  <section id="providers">
+    <h2>Works with</h2>
+    <dl class="providers">
+      <div><dt>Fastmail and Gmail</dt><dd>Tested, with an app password. On Gmail, keep <code>[Gmail]/All Mail</code> in the backup: archived mail lives only there. The <a href="/guide/#config">guide</a> explains.</dd></div>
+      <div><dt>Any other IMAP server</dt><dd>Should work, but it has only been tried against a Dovecot test server. <code>imapvault doctor</code> shows what your server offers.</dd></div>
+      <div><dt>Microsoft 365 and Outlook.com</dt><dd>Not supported. Microsoft does not offer app passwords for IMAP and requires OAuth2, which imapvault does not implement.</dd></div>
+    </dl>
+    <p class="muted" style="margin:1rem 0 0">It runs on Linux and macOS, not Windows. There is no web interface: it is a command line and, if you like, a long-running process.</p>
+    <p class="next"><a href="/guide/">Then set it up: getting started &rarr;</a></p>
+  </section>
+
   <section id="status">
     <h2>Status</h2>
     <p>This is a brand new project and I am still working on it, so expect rough edges. It has been tested with Fastmail and Gmail, and it should work with most IMAP providers. Restore has only been run against a test server, so try it on a throwaway account before you point it at a mailbox you care about.</p>
@@ -90,6 +103,7 @@ imapvault --account personal restore --deleted-since 7d --in-place</code></pre>
 
 <footer>
   <div class="wrap">
+    <a href="/guide/">Guide</a>
     <a href="https://github.com/michele/imapvault">GitHub</a>
     <a href="https://github.com/michele/imapvault/releases">Releases</a>
     <span>MIT licence</span>
