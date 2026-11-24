@@ -472,6 +472,22 @@ tampered-checksum cases passed earlier against local archives. *Not verified:* t
 Cloudflare project and DNS, and that the live `https://imapvault.sh/install.sh` serves the script. Until that project exists and the
 v0.1.0 draft is published, the README's install command fails.
 
+**M9 Backup progress (done).** The engine emits `ProgressEvent`s (`BackupOptions.Progress`: run start, folder start, folder fetch with
+message and byte counts, message done, folder done); it draws nothing. `cmd/imapvault/progress.go` renders them to stderr: a live
+one-line bar (79 columns, redrawn at most every 200 ms) on a terminal, plain lines elsewhere (one when a folder starts downloading, one
+at most every 30 s, one when it is done), nothing for a folder with nothing new. `--progress auto|bar|log|none`; `auto` is `none` with
+`--json`. No new dependency, no on-disk change.
+*Findings:* the first version printed progress lines under `--json`, and 8 integration tests that merge stderr into the JSON they parse
+failed; the same merge happens with `2>&1 | jq` or cron mailing combined output, so `auto` now stays silent with `--json` (an explicit
+`--progress log` still prints). Folder names go through `clean()` before they reach a terminal. There is no account-wide total (it would
+need a STATUS pass over every folder first), so the bar covers one folder; folder numbers skip folders with nothing new. With `-v` and the
+bar, a folder's summary appears twice (the engine's log line and the renderer's); left as is.
+*Verified:* `make test`, `make lint`, `make itest` (podman); against dovecot with 4,000 and 9,700 synthetic messages: log mode piped
+(including the 30 s line and ETA), second run with nothing new (0 bytes on stderr), `--progress none`, `--json` with stderr merged
+(valid JSON), the live bar in a pseudo-terminal (never over 79 columns), `-v` with the bar, Ctrl-C mid-folder (clean line, exit 2, the
+next run fetched exactly the remainder), and the image run detached with `podman logs`. *Not verified:* the bar in terminal emulators
+other than a pty, `-t` in a container, a multi-GB first run on a real server.
+
 ## Testing
 
 - Unit: `plan` (sync diff, guard, retention) as table tests. Blob store and index with temp dirs.

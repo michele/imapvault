@@ -20,6 +20,21 @@ with an error instead of waiting, so you do not need `flock(1)` around it.
 Set `guard.on_alert` in the config for an immediate notification (see the README); `OnFailure=` below also
 catches exit `1` and `2`.
 
+## What the logs contain
+
+Under a timer, cron or a container, stderr is not a terminal, so `backup` prints plain progress lines (see
+"Progress" in the README) before its summary. They are written to the journal or your log file:
+
+```
+Bulk [3/9]: fetching 4000 messages (780.8 KiB)
+Bulk [3/9]: 2608/4000 (65%), 508.3/780.8 KiB, 16.9 KiB/s, ETA 16s     <- at most every 30 s
+Bulk [3/9]: done, full, 4000 messages, +4000 -0 ~0 (780.8 KiB in 46s)
+Snapshot 7: 4013 messages in 9 folders
+...
+```
+
+An hourly run with no new mail prints only the summary. To silence the progress lines use `--progress none`.
+
 ## Which machine, which key
 
 A scheduled backup needs the **public** keys only. Put `recipients` in the config and leave `identity_file`

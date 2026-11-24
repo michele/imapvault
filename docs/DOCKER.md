@@ -60,6 +60,11 @@ Schedule it from the host:
 33 4 * * 0  docker run --rm -v /srv/imapvault/config:/config:ro -v /srv/imapvault/repo:/repo ghcr.io/michele/imapvault:latest --account fastmail prune
 ```
 
+`docker logs` (or `docker compose logs`) shows plain progress lines while a long run is going, because a container
+without `-t` is not a terminal: a line when a folder starts downloading, one every 30 seconds with message count,
+bytes, rate and ETA, and one when the folder is done. Adding `-t` to `docker run` should give the live bar instead (not tried in a container). See
+[SCHEDULING.md](SCHEDULING.md#what-the-logs-contain).
+
 An overlapping run is refused by the repository lock, so a slow first backup is not doubled.
 
 Compose, if you prefer (`docker compose run --rm imapvault --account fastmail backup`):
@@ -103,5 +108,6 @@ make docker-buildx PLATFORMS=linux/amd64,linux/arm64
 ## What was verified
 
 `make docker-build` and a run of `init`, `backup` (twice: the second one read nothing), `snapshots` and
-`check --read-data` from the image against the dovecot test server. The pinned base images are the ones
+`check --read-data` from the image against the dovecot test server, with the progress lines read back through
+`podman logs` of a detached container. The pinned base images are the ones
 quietbox uses. The NAS and NFS notes are not verified on real hardware.

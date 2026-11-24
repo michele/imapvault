@@ -96,6 +96,16 @@ read, the connection drops, Ctrl-C), it writes a snapshot marked **partial**: it
 that were not reached keep their previous state, and nothing is recorded as deleted. If nothing could be backed
 up, no snapshot is written. Run `backup` again to finish.
 
+**Progress.** `backup` reports progress on stderr, so a first run that takes hours is not silent. On a terminal it
+draws one live line (folder `4/23`, messages, bytes, rate, ETA) and keeps a line for every folder that downloaded
+something. Anywhere else (cron, systemd, `docker logs`) it prints plain lines instead: one when a folder starts
+downloading, a progress line at most every 30 seconds, and one when it is done. A folder with nothing new prints
+nothing, so an hourly run with no new mail stays quiet. Folder numbers skip such folders.
+`--progress auto|bar|log|none` overrides the choice; `auto` shows nothing with `--json`, so a program that merges
+stderr into stdout still gets valid JSON. There is no account-wide total: the server cannot say how many bytes a
+whole mailbox holds without reading every folder first, so the bar covers one folder at a time. `-v` adds a line per
+message (folder, UID, hash prefix; never subjects or bodies) and works with the bar.
+
 Exit codes: `0` ok, `1` error, `2` partial backup, `3` guard alert (`3` wins when a run is both).
 
 ## Restore
