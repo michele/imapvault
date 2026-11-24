@@ -4,3 +4,10 @@ bin/
 .env
 *.env
 !.env.example
+
+# Docker deployment: real config, repository and secrets never get committed.
+/deploy/config/*
+/deploy/repo/
+/deploy/secrets/*
+!/deploy/secrets/README.md
+/deploy/local/

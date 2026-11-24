@@ -1,0 +1,101 @@
+# imapvault in Docker: one-shot backups for ONE mailbox account.
+#
+# imapvault is not a daemon. Each command (backup, prune, ...) starts a container, does its job and
+# exits, so nothing happens until you start it, by hand or from a scheduler on the host
+# (cron, a systemd timer, Synology Task Scheduler): see docs/DEPLOY.md, "Scheduling it".
+#
+#   cp .env.example .env                          # set PUID/PGID (`id` on the NAS) and IMAPVAULT_ACCOUNT
+#   mkdir -p config repo secrets && chmod 700 repo
+#   cp imapvault.example.toml config/fastmail.toml   # edit it; the file name is the account name
+#   (write the IMAP app password to secrets/imap_password, see secrets/README.md)
+#   docker compose run --rm init                  # once; creates the repository
+#   docker compose run --rm backup                # the first run can take hours; the live bar shows progress
+#   docker compose up                             # the same backup again, without a terminal (plain log lines)
+#
+# More commands, each one the matching imapvault command, with any extra arguments appended:
+#   docker compose run --rm backup --progress log     docker compose run --rm prune --dry-run
+#   docker compose run --rm forget                    docker compose run --rm check
+#   docker compose run --rm imapvault --account fastmail snapshots     (any other command)
+#
+# The config folder is mounted at /config/imapvault because that is where `--account NAME` looks
+# (the image sets XDG_CONFIG_HOME=/config). On the host the file is simply ./config/NAME.toml.
+#
+# Build the image from this checkout instead of pulling it (and set IMAPVAULT_IMAGE=imapvault:local in .env):
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml build backup
+name: imapvault-deploy
+
+x-imapvault: &imapvault
+  image: ${IMAPVAULT_IMAGE:-ghcr.io/michele/imapvault:latest}
+  # Must be able to read secrets/imap_password and write repo/: use the uid/gid that owns them on the
+  # host (`id` on the NAS), see docs/DEPLOY.md.
+  user: "${PUID:-65532}:${PGID:-65532}"
+  environment:
+    TZ: ${TZ:-UTC}
+    # Go does not size its heap to the cgroup limit: keep it under mem_limit.
+    GOMEMLIMIT: 700MiB
+  volumes:
+    - ./config:/config/imapvault:ro
+    # The repository (blobs and the SQLite index). Must be a LOCAL filesystem: the repository lock
+    # uses flock(2), which is unreliable on NFS/SMB.
+    - ./repo:/repo
+  secrets:
+    - source: imap_password
+      target: imap_password # -> /run/secrets/imap_password
+  # A run that fails is not retried by Docker; the next scheduled run resumes where it stopped.
+  restart: "no"
+  read_only: true
+  # Scratch space in RAM; nothing imapvault keeps is written here.
+  tmpfs:
+    - /tmp:size=64m
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  # SIGTERM stops a run cleanly: what was downloaded is kept and the next run continues from it.
+  stop_grace_period: 60s
+  mem_limit: 1g
+  pids_limit: 128
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+# `entrypoint` (not `command`) fixes the command, so anything you type after the service name is
+# appended to it instead of replacing it: `docker compose run --rm prune --dry-run`.
+services:
+  backup:
+    <<: *imapvault
+    entrypoint: ["/imapvault", "--account", "${IMAPVAULT_ACCOUNT:?set IMAPVAULT_ACCOUNT in .env}", "backup"]
+
+  # The services below are only started when you name them (they are in the "tools" profile).
+  init:
+    <<: *imapvault
+    profiles: [tools]
+    entrypoint: ["/imapvault", "--account", "${IMAPVAULT_ACCOUNT:?set IMAPVAULT_ACCOUNT in .env}", "init"]
+
+  forget:
+    <<: *imapvault
+    profiles: [tools]
+    entrypoint: ["/imapvault", "--account", "${IMAPVAULT_ACCOUNT:?set IMAPVAULT_ACCOUNT in .env}", "forget"]
+
+  # Removes data: look first with `docker compose run --rm prune --dry-run`.
+  prune:
+    <<: *imapvault
+    profiles: [tools]
+    entrypoint: ["/imapvault", "--account", "${IMAPVAULT_ACCOUNT:?set IMAPVAULT_ACCOUNT in .env}", "prune"]
+
+  # Reads every stored object back and verifies its hash. It needs no private key.
+  check:
+    <<: *imapvault
+    profiles: [tools]
+    entrypoint: ["/imapvault", "--account", "${IMAPVAULT_ACCOUNT:?set IMAPVAULT_ACCOUNT in .env}", "check", "--read-data"]
+
+  # Any other command; you give the whole command line, so name the account yourself.
+  imapvault:
+    <<: *imapvault
+    profiles: [tools]
+    entrypoint: ["/imapvault"]
+
+secrets:
+  imap_password:
+    file: ./secrets/imap_password

@@ -1,0 +1,23 @@
+# Copy to config/<account>.toml (the file name is the account name, e.g. config/fastmail.toml) and edit.
+# The container sees it as /config/imapvault/<account>.toml. See docs/DEPLOY.md.
+#
+# A backup-only host: public keys only (no identity_file), no [restore], and no [guard] on_alert
+# (the image has no programs to run; act on the exit code instead, see the guide).
+[imap]
+host = "imap.fastmail.com"
+username = "you@example.com"
+# The compose file mounts secrets/imap_password here. The password never goes in this file.
+password_file = "/run/secrets/imap_password"
+
+[repository]
+# ./repo on the host. Use the account name so a second account gets its own folder.
+path = "/repo/fastmail"
+
+[folders]
+exclude = ["Spam", "Junk"]
+
+# Decided at the first `init`; it cannot be added later. Make a key pair on a trusted machine with
+# `imapvault keygen --out personal.key`, put the PUBLIC key here, and keep the private key off this host.
+# Add a second, offline recovery key.
+[encryption]
+recipients = ["age1workingkey...", "age1recoverykey..."]
