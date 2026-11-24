@@ -50,6 +50,7 @@ func clean(s string) string {
 
 func newBackupCmd(opts *options) *cobra.Command {
 	var full bool
+	var progress string
 	cmd := &cobra.Command{
 		Use:   "backup",
 		Short: "Back up the mailbox into a new snapshot",
@@ -92,10 +93,24 @@ Exit codes: 0 ok, 1 error, 2 partial, 3 guard alert.`,
 			}
 			defer func() { _ = src.Close() }()
 			bo := engine.BackupOptions{Full: full}
-			if opts.verbose {
-				bo.Logf = func(format string, args ...any) { _, _ = fmt.Fprintf(cmd.ErrOrStderr(), format+"\n", args...) }
+			errw := cmd.ErrOrStderr()
+			mode, err := resolveProgressMode(progress, isTerminalFile(errw), os.Getenv)
+			if err != nil {
+				return err
+			}
+			closeProgress := func() {}
+			if mode != progressNone {
+				pr := newProgress(errw, mode, time.Now)
+				closeProgress = pr.Close
+				bo.Progress = pr.Event
+				if opts.verbose {
+					bo.Logf = pr.Logf
+				}
+			} else if opts.verbose {
+				bo.Logf = func(format string, args ...any) { _, _ = fmt.Fprintf(errw, format+"\n", args...) }
 			}
 			rep, err := engine.Backup(cmd.Context(), cfg, src, bo)
+			closeProgress() // the live bar goes before the summary or the error
 			if err != nil {
 				return err
 			}
@@ -110,6 +125,7 @@ Exit codes: 0 ok, 1 error, 2 partial, 3 guard alert.`,
 			return backupExitError(rep)
 		},
 	}
+	cmd.Flags().StringVar(&progress, "progress", "auto", "progress display on stderr: auto (live bar on a terminal, plain lines otherwise), bar, log or none")
 	cmd.Flags().BoolVar(&full, "full", false, "list every folder in full instead of trusting what the server says changed")
 	return cmd
 }

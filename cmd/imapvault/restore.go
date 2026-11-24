@@ -25,8 +25,12 @@ var (
 // isTerminal reports whether r is an interactive terminal. /dev/null is a
 // character device too but nobody is there to answer, so it does not count: a
 // cron job started with </dev/null takes the non-interactive path.
-func isTerminal(r io.Reader) bool {
-	f, ok := r.(*os.File)
+func isTerminal(r io.Reader) bool { return isTerminalFile(r) }
+
+// isTerminalFile reports whether v is an *os.File attached to a terminal
+// (stdin, stdout or stderr, not /dev/null or a pipe).
+func isTerminalFile(v any) bool {
+	f, ok := v.(*os.File)
 	if !ok {
 		return false
 	}
