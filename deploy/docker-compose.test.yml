@@ -1,0 +1,19 @@
+# Used only by `make deploy-itest` (tools/deploy-itest.sh), never in a deployment.
+# Config validation refuses tls = "none" for a non-loopback host, so the services join the network
+# namespace of the dovecot test container and reach it as 127.0.0.1:31143.
+x-test-net: &test-net
+  network_mode: "container:${IMAPVAULT_TEST_SERVER:-imapvault-imap-1}"
+
+services:
+  backup:
+    <<: *test-net
+  init:
+    <<: *test-net
+  forget:
+    <<: *test-net
+  prune:
+    <<: *test-net
+  check:
+    <<: *test-net
+  imapvault:
+    <<: *test-net

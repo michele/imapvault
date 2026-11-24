@@ -12,7 +12,7 @@ DOCKER_BUILD_ARGS = --label org.opencontainers.image.version=$(VERSION) --label 
 	--build-arg VERSION=$(VERSION) --build-arg COMMIT=$(REVISION)
 COMPOSE_FILE := docker-compose.test.yml
 
-.PHONY: test lint itest itest-up itest-down seed build release-snapshot docker-build docker-buildx
+.PHONY: test lint itest itest-up itest-down seed deploy-itest build release-snapshot docker-build docker-buildx
 
 test:
 	go test ./... -race
@@ -54,4 +54,9 @@ seed:
 
 itest: itest-up seed
 	IMAPVAULT_IMAP_PASSWORD=test go test -tags integration -race -count=1 -p 1 ./... ; \
+	status=$$?; $(MAKE) itest-down; exit $$status
+
+# The compose bundle in deploy/, run as a user would run it, against the dovecot server.
+deploy-itest: docker-build itest-up seed
+	COMPOSE="$(COMPOSE)" tools/deploy-itest.sh ; \
 	status=$$?; $(MAKE) itest-down; exit $$status
