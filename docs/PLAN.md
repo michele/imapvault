@@ -29,7 +29,7 @@ and `imapvault restore` puts the mail back.
 - TUI snapshot browser, full-text search, export to mbox/Maildir (see "Later").
 - Two-way sync and migration-as-a-feature (restore to another server covers it).
 - Contacts and calendars (not IMAP).
-- OAuth2 (password / app password only, like quietbox).
+- OAuth2. imapvault signs in with a password or app password only, so Microsoft 365 and Outlook.com (which offer no app passwords for IMAP and require OAuth2) are not supported, and the site and README say so.
 - Multiple accounts per repository. One account = one config file = one repository.
 
 ## Accounts and config
@@ -539,6 +539,20 @@ prune is refused with its reason; a config pointed at a closed port gives backof
 folder exits 0 and the next start fetches only the remainder. *Not verified:* days of uptime, a real provider, ntfy.sh itself (nothing
 was sent to an external service), Docker Engine, Synology's view of a long-running project.
 
+**M12 Getting started on the site (done).** `site/guide/index.html`: install to a restored backup in 13 steps (key, config, `doctor`, `init`,
+first backup, looking around, `run`, the guard, restore, tidy up, troubleshooting), written to the same pattern as quietbox's guide. The home page
+gained a "Works with" list (Fastmail and Gmail tested; any other IMAP server should work; Microsoft 365 and Outlook.com **not supported**, with the
+reason) and links into the guide; the CSS moved to a shared `site/style.css`. `README.md` has a Providers table, `examples/gmail.toml` is new.
+*Kept honest by tests:* every `<pre data-lang="toml">` block on the site parses with the real config loader, and every `imapvault ...` line in the
+guide names a real command and only flags that command has (both checked to fail on a bad key, flag and command). A test also pins that Gmail
+folder patterns are literal (`[Gmail]/Spam` is not a character class: only `*` and `?` are wildcards).
+*Verified:* the guide's whole flow was run against the dovecot test server (keygen, `doctor`, `init`, backup, snapshots, `ls`, `show`, a mass deletion,
+the alert, `diff`, `restore` preview, token approval, the idempotent second restore, `ack`, `prune --dry-run`), and every output the page quotes is from
+that run. Both pages render at 1100 px and at a true 390 px with no horizontal overflow, and all 57 links resolve. *Finding:* `doctor` printed internal
+milestone labels such as "(M3)"; they are gone. *Not verified:* Cloudflare Pages serving `/guide/` and `/style.css` from the domain root, Gmail beyond what the
+maintainer reports, and Microsoft's current IMAP policy (the page gives OAuth2 as the reason, not a date). *Possible follow-up:* a clear error when
+someone points imapvault at an Outlook host, instead of a bare login failure.
+
 ## Testing
 
 - Unit: `plan` (sync diff, guard, retention) as table tests. Blob store and index with temp dirs.
@@ -573,5 +587,5 @@ was sent to an external service), Docker Engine, Synology's view of a long-runni
 - Search: SQLite FTS5 over headers (from, to, subject, date)
 - `export` a snapshot or folder to Maildir / mbox
 - `mount` a snapshot as a read-only Maildir via FUSE (restic-style)
-- OAuth2 (Gmail, Microsoft 365), JMAP source for Fastmail
+- OAuth2, the one thing that would bring Microsoft 365 and Outlook.com in (and let Gmail work without an app password); JMAP source for Fastmail
 - Notifications beyond `on_alert` (email via SMTP, ntfy, webhook)

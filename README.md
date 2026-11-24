@@ -11,6 +11,8 @@ An open-source IMAP backup tool: point-in-time **snapshots** of a mailbox in a l
 repository, a grace period for deleted mail, mass-deletion alerts, and restore of any
 snapshot, folder or message back to an IMAP server.
 
+New here? The [getting started guide](https://imapvault.sh/guide/) goes from install to a restored backup, step by step.
+
 **Status: alpha, a brand new project.** The on-disk format has been frozen since v0.1.0: a later change to it ships a migration or a
 clear refusal. Everything is tested against a dovecot test server, and read-only backups have run against real Fastmail and Gmail mailboxes; it should work with most IMAP providers. Restore has only been run against the test server: try it on a throwaway account first (see [Restore](#restore)).
 Design and decisions: [docs/PLAN.md](docs/PLAN.md).
@@ -44,6 +46,20 @@ backups keep failing ([docs/DEPLOY.md](docs/DEPLOY.md) has a Docker Compose file
 (systemd timer, cron: [docs/SCHEDULING.md](docs/SCHEDULING.md)) and run `forget` + `prune` weekly. A machine that only runs the schedule needs
 the public keys only ([examples/backup-only.toml](examples/backup-only.toml)); keep the private key where you
 read or restore mail, and keep a second, offline recovery key. Exit code `3` means the guard saw a mass deletion.
+
+## Providers
+
+| Provider | Status | Config |
+|---|---|---|
+| Fastmail | tested; app password | [`examples/fastmail.toml`](examples/fastmail.toml) |
+| Gmail | tested; IMAP with an [app password](https://myaccount.google.com/apppasswords) (needs 2-Step Verification); keep `[Gmail]/All Mail` in the backup (see [Configuration](#configuration)) | [`examples/gmail.toml`](examples/gmail.toml) |
+| Any other IMAP server | should work; tried against Dovecot 2.4.5 only; `imapvault doctor` shows what your server offers | [`examples/generic-imap.toml`](examples/generic-imap.toml) |
+| Microsoft 365, Outlook.com | **not supported**: Microsoft does not offer app passwords for IMAP and requires OAuth2, which imapvault does not implement | |
+
+An **app password** is a separate password your provider creates for one application, so you never give
+imapvault your real one. Create it in your provider's security settings (Fastmail: Settings, Privacy & Security,
+Integrations, New app password, "Mail (IMAP)"), and keep it out of the config file: `password_file`,
+`password_command` or the `IMAPVAULT_IMAP_PASSWORD` environment variable.
 
 ## Configuration
 
