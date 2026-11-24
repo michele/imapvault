@@ -1,8 +1,10 @@
-# imapvault in Docker: one-shot backups for ONE mailbox account.
+# imapvault in Docker: backups for ONE mailbox account.
 #
-# imapvault is not a daemon. Each command (backup, prune, ...) starts a container, does its job and
-# exits, so nothing happens until you start it, by hand or from a scheduler on the host
-# (cron, a systemd timer, Synology Task Scheduler): see docs/DEPLOY.md, "Scheduling it".
+# `docker compose up -d` starts the `run` service: one long-running container that backs up every
+# hour, applies the retention policy ("forget") daily, optionally prunes, and notifies you when the
+# mass-deletion guard trips or backups keep failing. Without it, imapvault is one-shot: `backup` makes
+# one snapshot and exits, and something on the host (cron, a systemd timer, Synology Task Scheduler)
+# has to start it. See docs/DEPLOY.md.
 #
 #   cp .env.example .env                          # set PUID/PGID (`id` on the NAS) and IMAPVAULT_ACCOUNT
 #   mkdir -p config repo secrets && chmod 700 repo
@@ -10,10 +12,11 @@
 #   (write the IMAP app password to secrets/imap_password, see secrets/README.md)
 #   docker compose run --rm init                  # once; creates the repository
 #   docker compose run --rm backup                # the first run can take hours; the live bar shows progress
-#   docker compose up                             # the same backup again, without a terminal (plain log lines)
+#   docker compose up -d                          # then let imapvault schedule itself
+#   docker compose logs -f -t run                 # what it is doing
 #
 # More commands, each one the matching imapvault command, with any extra arguments appended:
-#   docker compose run --rm backup --progress log     docker compose run --rm prune --dry-run
+#   docker compose run --rm backup --full             docker compose run --rm prune --dry-run
 #   docker compose run --rm forget                    docker compose run --rm check
 #   docker compose run --rm imapvault --account fastmail snapshots     (any other command)
 #
@@ -61,13 +64,30 @@ x-imapvault: &imapvault
       max-file: "3"
 
 # `entrypoint` (not `command`) fixes the command, so anything you type after the service name is
-# appended to it instead of replacing it: `docker compose run --rm prune --dry-run`.
+# appended to it instead of replacing it: `docker compose run --rm prune --dry-run`. (`run` is the one
+# exception: its `command` holds the flags from .env, and typing flags after it replaces them.)
 services:
-  backup:
+  # The default: what `docker compose up -d` starts. The intervals come from .env. A run that fails is
+  # retried by imapvault itself; Docker only restarts the container if the process exits, which it does
+  # at once when the config or repository cannot be opened (so a bad setup shows as a restart loop).
+  run:
     <<: *imapvault
-    entrypoint: ["/imapvault", "--account", "${IMAPVAULT_ACCOUNT:?set IMAPVAULT_ACCOUNT in .env}", "backup"]
+    restart: unless-stopped
+    entrypoint: ["/imapvault", "--account", "${IMAPVAULT_ACCOUNT:?set IMAPVAULT_ACCOUNT in .env}", "run"]
+    command:
+      - --every=${IMAPVAULT_EVERY:-1h}
+      - --forget-every=${IMAPVAULT_FORGET_EVERY:-24h}
+      - --prune-every=${IMAPVAULT_PRUNE_EVERY:-0}
+      - --stale-after=${IMAPVAULT_STALE_AFTER:-24h}
 
   # The services below are only started when you name them (they are in the "tools" profile).
+  # One backup, then exit: for the first run, a manual run, or a scheduler on the host
+  # (`docker compose run --rm -T backup`; do not run it next to `run`, they would take turns).
+  backup:
+    <<: *imapvault
+    profiles: [tools]
+    entrypoint: ["/imapvault", "--account", "${IMAPVAULT_ACCOUNT:?set IMAPVAULT_ACCOUNT in .env}", "backup"]
+
   init:
     <<: *imapvault
     profiles: [tools]

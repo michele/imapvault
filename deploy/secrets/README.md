@@ -15,3 +15,9 @@ Avoid typing the password on a command line (shell history). If you must, use
 The container reads it as `/run/secrets/imap_password`. The file keeps its owner and mode inside the
 container, so the user the container runs as (`PUID`/`PGID`) must be able to read it. A file it cannot
 read fails with "permission denied"; see docs/DEPLOY.md, "Passwords".
+
+## Optional: alert_url
+
+To get notifications (a guard alert, or no good backup for a day), put the URL they are POSTed to in
+`alert_url`, on one line, and follow "Notifications" in docs/DEPLOY.md to mount it. A topic URL such as
+`https://ntfy.sh/your-topic` works like a password, so treat the file the same way.

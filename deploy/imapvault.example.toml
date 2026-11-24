@@ -1,8 +1,9 @@
 # Copy to config/<account>.toml (the file name is the account name, e.g. config/fastmail.toml) and edit.
 # The container sees it as /config/imapvault/<account>.toml. See docs/DEPLOY.md.
 #
-# A backup-only host: public keys only (no identity_file), no [restore], and no [guard] on_alert
-# (the image has no programs to run; act on the exit code instead, see the guide).
+# A backup-only host: public keys only (no identity_file) and no [restore]. The image has no programs,
+# so there is no [guard] on_alert; to be told about a guard alert or a long run of failed backups,
+# use on_alert_url below.
 [imap]
 host = "imap.fastmail.com"
 username = "you@example.com"
@@ -15,6 +16,12 @@ path = "/repo/fastmail"
 
 [folders]
 exclude = ["Spam", "Junk"]
+
+# Notifications: a plain-text POST (ntfy and similar). The URL works like a password, so keep it in a
+# secret file rather than here: add `alert_url` under secrets: in the compose file (see docs/DEPLOY.md).
+# An http URL is accepted only for a local address (a compose service name, 192.168.x.x, localhost).
+# [guard]
+# on_alert_url_file = "/run/secrets/alert_url"
 
 # Decided at the first `init`; it cannot be added later. Make a key pair on a trusted machine with
 # `imapvault keygen --out personal.key`, put the PUBLIC key here, and keep the private key off this host.

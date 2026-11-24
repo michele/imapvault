@@ -5,6 +5,8 @@ x-test-net: &test-net
   network_mode: "container:${IMAPVAULT_TEST_SERVER:-imapvault-imap-1}"
 
 services:
+  run:
+    <<: *test-net
   backup:
     <<: *test-net
   init:
