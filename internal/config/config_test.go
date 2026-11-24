@@ -230,3 +230,17 @@ func TestRestoreAllowAppend(t *testing.T) {
 		t.Fatal("a misspelled key must be rejected, not silently leave writing off or on")
 	}
 }
+
+// Gmail folder names contain brackets. Only * and ? are wildcards, so
+// "[Gmail]/Spam" means exactly that folder and nothing else (the Gmail example
+// and the guide rely on it).
+func TestGmailFolderPatternsAreLiteral(t *testing.T) {
+	f := Folders{Include: []string{"*"}, Exclude: []string{"[Gmail]/Spam"}}
+	for name, want := range map[string]bool{
+		"[Gmail]/Spam": false, "[Gmail]/All Mail": true, "[Gmail]/Trash": true, "INBOX": true, "G/Spam": true, "a/Spam": true,
+	} {
+		if got := f.Selected(name); got != want {
+			t.Errorf("Selected(%q) = %v, want %v", name, got, want)
+		}
+	}
+}

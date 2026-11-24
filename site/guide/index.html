@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting started with imapvault</title>
+<meta name="description" content="Install imapvault, back up a mailbox, keep it running, and restore mail from a snapshot, step by step.">
+<meta property="og:title" content="Getting started with imapvault">
+<meta property="og:description" content="From install to a backup you have restored once, step by step.">
+<meta property="og:image" content="https://imapvault.sh/og.png">
+<meta property="og:url" content="https://imapvault.sh/guide/">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="/favicon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700&family=JetBrains+Mono:wght@400&display=swap">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero" style="padding-bottom:2rem">
+    <div class="wordmark"><a href="/">imapvault</a></div>
+    <h1>Getting started</h1>
+    <p class="lede">From install to a backup you have restored once. imapvault only reads your mailbox until step 11, and restore only ever adds mail, so you can stop at any point before that and nothing on your server has changed.</p>
+  </header>
+
+  <nav class="toc" aria-label="Steps">
+    <ol>
+      <li><a href="#before">Before you start</a></li>
+      <li><a href="#install">Install</a></li>
+      <li><a href="#key">Make a key</a></li>
+      <li><a href="#config">Write a config</a></li>
+      <li><a href="#check">Check the connection</a></li>
+      <li><a href="#init">Create the repository</a></li>
+      <li><a href="#backup">Make the first backup</a></li>
+      <li><a href="#look">Look around</a></li>
+      <li><a href="#running">Keep it running</a></li>
+      <li><a href="#guard">When the guard trips</a></li>
+      <li><a href="#restore">Get mail back</a></li>
+      <li><a href="#tidy">Tidy up</a></li>
+      <li><a href="#trouble">When something is off</a></li>
+    </ol>
+  </nav>
+
+  <section id="before">
+    <h2>1. Before you start</h2>
+    <p>You need a mailbox on Fastmail, Gmail, or another IMAP server. Microsoft 365 and Outlook.com are not supported: Microsoft does not offer app passwords for IMAP and only allows it through OAuth2, and imapvault signs in with a password only.</p>
+    <p>You also need an <strong>app password</strong>: a separate password your provider creates for one application, so imapvault never sees your real one. It can be revoked on its own.</p>
+    <ul class="plain">
+      <li><strong>Fastmail:</strong> Settings, Privacy &amp; Security, Integrations, New app password, access "Mail (IMAP)".</li>
+      <li><strong>Gmail:</strong> <a href="https://myaccount.google.com/apppasswords">myaccount.google.com/apppasswords</a>. It needs 2-Step Verification, IMAP must be switched on in Gmail's settings, and Google Workspace admins can switch app passwords off.</li>
+    </ul>
+    <p style="margin-top:1rem">Decide one thing now: whether the repository is <strong>encrypted</strong>. It is fixed when the repository is created and cannot be added later, so step 3 comes before step 6.</p>
+    <div class="note"><p>imapvault is a new project. Backup only reads your mailbox, and restore only adds mail, but restore has only been run against a test server, so try it on a throwaway account before you rely on it.</p></div>
+  </section>
+
+  <section id="install">
+    <h2>2. Install</h2>
+<pre><code>curl -fsSL https://imapvault.sh/install.sh | sh
+imapvault --version</code></pre>
+    <p style="margin-top:1rem" class="muted">This puts <code>imapvault</code> in <code>~/.local/bin</code>, so make sure that is on your <code>PATH</code>. For other ways to install (Homebrew, archives, a container), see <a href="/#install">the install section</a>.</p>
+  </section>
+
+  <section id="key">
+    <h2>3. Make a key</h2>
+    <p>imapvault encrypts to a <em>public</em> key, so the machine that makes backups never holds anything that can read them. Make a key pair on a machine you trust:</p>
+<pre><code>imapvault keygen --out personal.key
+
+Wrote the private key to personal.key (mode 0600).
+Back it up somewhere safe: without it the repository cannot be read.
+
+Public key (recipient): age1nc47px2whqdrl09m73f75cdqsvg0njf0svpnrd6lxdl86mgt547sacaxan
+
+Add to your account config:
+
+  [encryption]
+  recipients = ["age1nc47px2whqdrl09m73f75cdqsvg0njf0svpnrd6lxdl86mgt547sacaxan"]
+  identity_file = "personal.key"   # only on machines that read mail; a backup-only machine omits it</code></pre>
+    <p style="margin-top:1rem">Keep <code>personal.key</code> safe, and <strong>make a second key the same way as a recovery key and keep it offline</strong>: without a private key the repository cannot be read, and there is no way around that. Put both public keys in the config below. If you would rather not encrypt, skip this step and leave <code>[encryption]</code> out, knowing it cannot be changed later.</p>
+  </section>
+
+  <section id="config">
+    <h2>4. Write a config</h2>
+    <p>imapvault reads one TOML file per account, in <code>~/.config/imapvault/NAME.toml</code>, and you pick the account with <code>--account NAME</code>. Start from the example for your provider in <a href="https://github.com/michele/imapvault/tree/main/examples"><code>examples/</code></a> on GitHub (Fastmail, Gmail, or any IMAP server). Save this as <code>~/.config/imapvault/personal.toml</code>:</p>
+<pre data-lang="toml"><code>[imap]
+host = "imap.fastmail.com"       # Gmail: imap.gmail.com
+username = "you@example.com"
+
+[repository]
+path = "~/imapvault/personal"
+
+[folders]
+exclude = ["Spam", "Junk"]
+
+[encryption]
+recipients = ["age1workingkey...", "age1recoverykey..."]   # the two PUBLIC keys from step 3
+identity_file = "~/.config/imapvault/personal.key"         # only on a machine that reads mail</code></pre>
+    <p style="margin-top:1rem">The password never goes in the file. For now, put it in the environment:</p>
+<pre><code>export IMAPVAULT_IMAP_PASSWORD='your-app-password'</code></pre>
+    <p style="margin-top:1rem" class="muted">For anything unattended, add <code>password_file = "~/.config/imapvault/personal.password"</code> (one line, <code>chmod 600</code>) or a <code>password_command</code> under <code>[imap]</code> instead.</p>
+    <div class="note"><p><strong>On Gmail, do not exclude <code>[Gmail]/All Mail</code>.</strong> Gmail shows labels as folders, and archived mail (the Inbox label removed) exists only in All Mail, so leaving it out would miss that mail, and archiving a lot at once would look like a mass deletion. A message is still stored only once, but the first backup downloads it once per label, and Gmail limits how much IMAP data an account can download per day, so a big first backup can take several runs. Excluding <code>[Gmail]/Spam</code> is safe.</p></div>
+    <div class="note"><p>A machine that only makes backups (a NAS, a server) should <strong>leave <code>identity_file</code> out</strong>: it can then back up, tidy up and verify, but cannot read a single message. Reading, diffing and restoring need the private key, so do those from the machine that has it.</p></div>
+  </section>
+
+  <section id="check">
+    <h2>5. Check the connection</h2>
+<pre><code>imapvault --account personal doctor</code></pre>
+    <p style="margin-top:1rem"><code>doctor</code> logs in, shows what the server supports, and lists every folder with its message count and whether it will be backed up. It changes nothing and needs no repository yet. This is what it printed against the test server:</p>
+<pre><code>Server features:
+  CONDSTORE    yes  fast flag-change detection
+  QRESYNC      yes  fast expunge detection
+  OBJECTID     no   skip downloading a message already stored (not used yet)
+  SPECIAL-USE  yes  folder roles such as \Trash and \Sent
+  UIDPLUS      yes  needed by restore
+
+Folders:
+  FOLDER        MESSAGES  ROLE     BACKED UP
+  Archive       2                  yes
+  Archive/2025  1                  yes
+  Drafts        0         \Drafts  yes
+  INBOX         4                  yes
+  Junk          0         \Junk    no (excluded)
+  Sent          1         \Sent    yes
+  Trash         1         \Trash   yes
+  Tricky        4                  yes
+
+13 message(s) in the folders that would be backed up.</code></pre>
+    <p style="margin-top:1rem" class="muted">CONDSTORE and QRESYNC make later backups fast. Without them imapvault still works, but it has to list every folder in full each time.</p>
+  </section>
+
+  <section id="init">
+    <h2>6. Create the repository</h2>
+<pre><code>imapvault --account personal init</code></pre>
+    <p style="margin-top:1rem">This creates the repository at <code>repository.path</code> and ties it to this account, so no other mailbox can be written into it by mistake. It prints whether the mail will be encrypted. If it says <code>NOT encrypted</code> and you meant it to be, fix <code>recipients</code> and delete the repository now: this is the last chance.</p>
+  </section>
+
+  <section id="backup">
+    <h2>7. Make the first backup</h2>
+<pre><code>imapvault --account personal backup</code></pre>
+    <p style="margin-top:1rem">The mailbox is opened read-only: folders with <code>EXAMINE</code> and messages with <code>BODY.PEEK[]</code>, so nothing is marked as read and nothing on the server can change. The first run downloads everything and can take hours; if it is interrupted, the next run continues where it stopped. In a terminal you see a live progress line; in a log you see plain lines, ending with a summary:</p>
+<pre><code>Archive [1/7]: fetching 2 messages (521 B)
+Archive [1/7]: done, full, 2 messages, +2 -0 ~0 (521 B in 0s)
+...
+Snapshot 1: 13 messages in 7 folders
+  messages  +13 new, -0 deleted, ~0 flag changes
+  storage   12 blob(s) written (2.7 KiB), 1 already stored
+  read      13 body(ies) downloaded; folders: 0 unchanged, 0 incremental, 7 full
+  folders   +7 new, -0 gone</code></pre>
+    <p style="margin-top:1rem">Run it again straight away and it reads nothing: each folder the server reports as unchanged costs one <code>EXAMINE</code>.</p>
+  </section>
+
+  <section id="look">
+    <h2>8. Look around</h2>
+    <p>Every backup is a <strong>snapshot</strong>: a cheap index of what was where, with flags. Reading names and headers needs your private key, so run these where <code>identity_file</code> is set.</p>
+<pre><code><span class="c"># your snapshots</span>
+imapvault --account personal snapshots
+
+<span class="c"># the folders in the newest one, then the messages in one folder</span>
+imapvault --account personal ls latest
+imapvault --account personal ls latest INBOX</code></pre>
+    <p style="margin-top:1rem"><code>ls latest INBOX</code> prints one line per message, ending with a hash you can give to <code>show</code>:</p>
+<pre><code>Snapshot 1 (2026-11-24 18:26:55), folder INBOX
+UID  FLAGS  SIZE  DATE              FROM                SUBJECT        SHA256
+1           224   2026-05-03 11:00  alice@friends.test  Hello          66d846875c8b
+2           241   2026-05-04 12:30  bob@work.test       Meeting notes  847413d88260
+...
+
+imapvault --account personal show 3f9a1c2b7d4e
+
+<span class="c"># what changed between two snapshots</span>
+imapvault --account personal diff latest~1 latest</code></pre>
+  </section>
+
+  <section id="running">
+    <h2>9. Keep it running</h2>
+    <p>A backup you have to remember to make is not much of a backup. The simplest way to keep one going is <code>run</code>:</p>
+<pre><code>imapvault --account personal run</code></pre>
+    <p style="margin-top:1rem"><code>run</code> backs up every hour, applies your retention policy daily, retries failures with a back-off, keeps going after an alert, and tells you if backups stop working. It never prunes unless you ask (<code>--prune-every 7d</code>). Stop it with Ctrl-C or SIGTERM and it exits cleanly.</p>
+    <p>On a NAS or home server, the <a href="https://github.com/michele/imapvault/blob/main/docs/DEPLOY.md">Docker guide</a> has a Compose file that starts it with <code>docker compose up -d</code>. If you would rather use cron or a systemd timer, see the <a href="https://github.com/michele/imapvault/blob/main/docs/SCHEDULING.md">scheduling notes</a>. Use one or the other for an account, not both.</p>
+  </section>
+
+  <section id="guard">
+    <h2>10. When the guard trips</h2>
+    <p>Each run is compared with the one before. If a lot of mail has disappeared from the server, or a folder has vanished, the snapshot is flagged, the last good one is pinned so it cannot be pruned, and <code>backup</code> exits with code 3. Here 80 of 113 messages were deleted from one folder:</p>
+<pre><code>Snapshot 4: 33 messages in 8 folders
+  messages  +0 new, -80 deleted, ~0 flag changes
+  storage   0 blob(s) written (0 B), 0 already stored
+  read      0 body(ies) downloaded; folders: 7 unchanged, 1 incremental, 0 full
+
+
+ALERT 1 (mass-deletion): 80 of 113 messages deleted (70.8%) since snapshot 3: Bulk 80
+  snapshot 4 is flagged; snapshot 3, the last one before it, is pinned and kept
+  see what changed:  imapvault --account personal diff 3 4
+  acknowledge:       imapvault --account personal ack 1</code></pre>
+    <p style="margin-top:1rem">Look at what happened, then decide:</p>
+<pre><code>imapvault --account personal alerts
+imapvault --account personal diff 3 4
+
+<span class="c"># when you have dealt with it</span>
+imapvault --account personal ack 1</code></pre>
+    <p style="margin-top:1rem">Until you acknowledge an alert, <code>prune</code> refuses to run. To be told without watching a terminal, set <code>on_alert_url</code> to a URL that accepts a text POST (an <a href="https://ntfy.sh">ntfy</a> topic, for example) or <code>on_alert</code> to a command; see the <a href="https://github.com/michele/imapvault#mass-deletion-guard">guard section</a> of the README.</p>
+  </section>
+
+  <section id="restore">
+    <h2>11. Get mail back</h2>
+    <p>Restore is the only command that writes to your server, so it cannot write until you have seen exactly what it will do and approved it. First allow it in the config of the account you restore <em>into</em>:</p>
+<pre><code>[restore]
+allow_append = true</code></pre>
+    <p style="margin-top:1rem">Then ask for what you want. This brings back everything deleted from the server in the last day, as new folders next to your own. The first run only previews:</p>
+<pre><code>imapvault --account personal restore --deleted-since 1d
+
+Restore preview. Nothing has been written yet.
+
+  Source:  deleted within 24h0m0s
+  Mode:    into new folders under "Restored/deleted-2026-11-24", next to your own
+
+  FOLDER                            STATE                 ADD  SKIP (already there)
+  Restored/deleted-2026-11-24/Bulk  new: will be created  80   0
+
+  Will create 1 folder and add 80 messages (14.9 KiB). 0 already on the server.
+  Nothing is deleted, moved, re-flagged or overwritten on the server.
+
+  Plan token: 0156b-974b8
+error: restore needs your approval: review the preview above, then run it again with --confirm 0156b-974b8. Nothing was written</code></pre>
+    <p style="margin-top:1rem">The token is a hash of the whole plan. At a terminal imapvault asks you to type it; in a script, pass it back. If the server has changed since the preview, the token no longer matches and nothing is written:</p>
+<pre><code>imapvault --account personal restore --deleted-since 1d --confirm 0156b-974b8
+
+Restored 80 messages (14.9 KiB) and created 1 folder. 0 were already there.
+
+<span class="c"># run it again and it finds nothing to do</span>
+imapvault --account personal restore --deleted-since 1d
+
+Nothing to restore: everything selected is already on the server.</code></pre>
+    <p style="margin-top:1rem">Restore only creates folders and appends messages. It never deletes, moves or re-flags anything, never restores the <code>\Deleted</code> flag, and skips any message that is already there, so running it twice is safe. Look through the <code>Restored/</code> folder in your mail app, then move what you want back, and delete the folder yourself when you are done.</p>
+    <div class="note"><p>Restore has only been run against a test server. Try it on a throwaway account first, and only then point it at a mailbox you care about.</p></div>
+  </section>
+
+  <section id="tidy">
+    <h2>12. Tidy up</h2>
+    <p>Snapshots pile up, and mail deleted from the server stays in the repository. Only two commands change that, and nothing else ever deletes data:</p>
+<pre><code>imapvault --account personal forget
+imapvault --account personal prune --dry-run</code></pre>
+    <p style="margin-top:1rem"><code>forget</code> marks the snapshots your <code>[retention]</code> policy no longer keeps; it deletes nothing. <code>prune</code> then removes what no kept snapshot needs, but only once mail has been gone from the server for 180 days by default, and never while a snapshot is pinned or an alert is open. Look first with <code>--dry-run</code>. <code>run</code> does the forget part for you and the prune part only if you ask.</p>
+  </section>
+
+  <section id="trouble">
+    <h2>When something is off</h2>
+    <ul class="plain">
+      <li><strong>Login fails</strong> (<code>NO [AUTHENTICATIONFAILED]</code>): use the app password, not your account password. On Gmail, check that IMAP is switched on. <code>doctor</code> tests the login without touching anything.</li>
+      <li><strong>"repository is locked":</strong> another imapvault command, or <code>run</code>, is using the repository. Wait for it; a second one never runs at the same time.</li>
+      <li><strong>Exit codes:</strong> 0 is fine, 1 is an error with a message, 2 means some folders were not reached and the next run finishes them, and 3 is a guard alert (step 10).</li>
+      <li><strong>"Writing to ... is not enabled":</strong> restore needs <code>[restore] allow_append = true</code> in the config of the account it writes to (step 11).</li>
+      <li><strong>The first Gmail backup is slow or stops:</strong> Gmail limits daily IMAP downloads. Run it again, or leave <code>run</code> going, and it resumes.</li>
+      <li><strong><code>ls</code>, <code>show</code> or <code>restore</code> cannot read names:</strong> they need the private key. Set <code>identity_file</code> on the machine you read from.</li>
+      <li><strong>Mail moved to a folder you excluded:</strong> the backup can no longer see it, so it looks deleted. Exclude folders you do not want, and keep the rest.</li>
+    </ul>
+    <p class="next"><a href="https://github.com/michele/imapvault#readme">Full reference on GitHub &rarr;</a></p>
+  </section>
+
+</div>
+
+<footer>
+  <div class="wrap">
+    <a href="/">Home</a>
+    <a href="https://github.com/michele/imapvault">GitHub</a>
+    <a href="https://github.com/michele/imapvault/releases">Releases</a>
+    <span>MIT licence</span>
+    <span>by <a href="https://finotto.org">Michele Finotto</a></span>
+  </div>
+</footer>
+</body>
+</html>

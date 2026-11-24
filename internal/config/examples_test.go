@@ -1,6 +1,7 @@
 package config
 
 import (
+	"html"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,6 +20,7 @@ func TestExampleConfigsParse(t *testing.T) {
 		"examples/generic-imap.toml",
 		"examples/backup-only.toml",
 		"deploy/imapvault.example.toml",
+		"examples/gmail.toml",
 	}
 	for _, f := range files {
 		t.Run(f, func(t *testing.T) {
@@ -69,3 +71,36 @@ func TestDocsTOMLBlocksParse(t *testing.T) {
 		t.Error("found no complete TOML block in the docs: is the test looking in the right place?")
 	}
 }
+
+var htmlTOMLBlock = regexp.MustCompile(`(?s)<pre data-lang="toml"><code>(.*?)</code></pre>`)
+
+// The website's guide carries configs people copy too. A <pre data-lang="toml">
+// block is a complete config and must parse.
+func TestSiteTOMLBlocksParse(t *testing.T) {
+	root := filepath.Join("..", "..")
+	pages, err := filepath.Glob(filepath.Join(root, "site", "*", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages = append(pages, filepath.Join(root, "site", "index.html"))
+	complete := 0
+	for _, page := range pages {
+		data, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, m := range htmlTOMLBlock.FindAllStringSubmatch(string(data), -1) {
+			complete++
+			block := html.UnescapeString(tagsOnSite.ReplaceAllString(m[1], ""))
+			if _, err := Parse([]byte(block), env(map[string]string{PasswordEnv: "secret", "HOME": "/home/u"})); err != nil {
+				t.Errorf("%s: TOML block %d does not parse: %v", page, i+1, err)
+			}
+		}
+	}
+	if complete == 0 {
+		t.Error("found no TOML block on the site: is the test looking in the right place?")
+	}
+}
+
+// tagsOnSite strips the <span class="c"> comment markup used inside code blocks.
+var tagsOnSite = regexp.MustCompile(`</?span[^>]*>`)

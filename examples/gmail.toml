@@ -1,0 +1,28 @@
+# ~/.config/imapvault/gmail.toml, used with: imapvault --account gmail ...
+#
+# Gmail needs 2-Step Verification and an app password (https://myaccount.google.com/apppasswords);
+# Google Workspace admins can switch app passwords off. IMAP must be switched on in Gmail's settings.
+[imap]
+host = "imap.gmail.com"
+port = 993
+username = "you@gmail.com"
+password_file = "~/.config/imapvault/gmail.password"   # one line; chmod 600
+
+[repository]
+path = "~/imapvault/gmail"
+
+# Gmail shows labels as folders, so a message with three labels sits in four places: each label plus
+# [Gmail]/All Mail. It is stored once however many folders hold it, but a first backup downloads it once per
+# place, and Gmail limits how much IMAP data an account can download per day: a big first backup may need
+# several runs (`imapvault run` resumes by itself).
+#
+# Do NOT exclude [Gmail]/All Mail: archived mail (the Inbox label removed) exists only there, and archiving a lot
+# at once would look like a mass deletion. Spam is safe to leave out. Think twice about [Gmail]/Trash: that is
+# where deletions land. On a non-English account these names are translated; `imapvault doctor` shows yours.
+[folders]
+exclude = ["[Gmail]/Spam"]
+
+# Decided at `imapvault init`; it cannot be added later. Make a key pair elsewhere with
+# `imapvault keygen --out personal.key`, and add a second, offline recovery key.
+[encryption]
+recipients = ["age1workingkey...", "age1recoverykey..."]
