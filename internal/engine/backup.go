@@ -33,8 +33,43 @@ type BackupOptions struct {
 	// Logf receives progress lines. They contain folder names, UIDs and hashes
 	// only: never subjects, bodies or credentials.
 	Logf func(format string, args ...any)
+	// Progress receives structured progress events (see ProgressEvent). It is
+	// called synchronously from the backup goroutine, so it must be cheap; a nil
+	// value means no reporting. Events carry folder names and counts only.
+	Progress func(ProgressEvent)
 	// Full forces a full rescan of every folder: no CONDSTORE shortcuts.
 	Full bool
+}
+
+// ProgressKind says what a ProgressEvent reports.
+type ProgressKind int
+
+const (
+	// ProgressRunStart: the folders to read are known (Folders).
+	ProgressRunStart ProgressKind = iota
+	// ProgressFolderStart: a folder is about to be examined and listed (Folder, Index, Folders).
+	ProgressFolderStart
+	// ProgressFolderFetch: the folder has Messages new messages to account for, of
+	// which Bytes (the sum of their RFC822.SIZE) will really be downloaded.
+	ProgressFolderFetch
+	// ProgressMessageDone: one new message is stored; Bytes is its size, or 0 when
+	// an EMAILID match made the download unnecessary.
+	ProgressMessageDone
+	// ProgressFolderDone: the folder is committed (Report). A folder that fails
+	// emits no FolderDone.
+	ProgressFolderDone
+)
+
+// ProgressEvent is one step of a backup run, for a renderer to draw. It never
+// carries message content: names, counts and sizes only (safety rule 6).
+type ProgressEvent struct {
+	Kind     ProgressKind
+	Folder   string
+	Index    int           // 1-based position of the folder in this run
+	Folders  int           // folders this run reads
+	Messages int           // FolderFetch: new messages to account for
+	Bytes    int64         // FolderFetch: bytes to download; MessageDone: bytes of this message
+	Report   *FolderReport // FolderDone only
 }
 
 // FolderReport is what one folder's backup changed.
@@ -203,6 +238,9 @@ type backup struct {
 
 	folderNames map[int64]string // folder id -> name, for the folders read in this run
 
+	folderIdx   int // 1-based index of the folder being read, for progress events
+	folderTotal int // folders this run reads
+
 	committed int  // folders verified and committed (or found unchanged) this run
 	partial   bool // the run did not verify every folder
 }
@@ -211,6 +249,14 @@ type target struct {
 	folder mail.Folder
 	hash   [32]byte
 	known  *index.Folder // nil for a folder first seen in this run
+}
+
+func (b *backup) emit(e ProgressEvent) {
+	if b.opts.Progress == nil {
+		return
+	}
+	e.Index, e.Folders = b.folderIdx, b.folderTotal
+	b.opts.Progress(e)
 }
 
 func (b *backup) warn(format string, args ...any) {
@@ -250,12 +296,16 @@ func (b *backup) execute(ctx context.Context) error {
 	}
 	sort.Slice(targets, func(i, j int) bool { return targets[i].folder.Name < targets[j].folder.Name })
 
+	b.folderTotal = len(targets)
+	b.emit(ProgressEvent{Kind: ProgressRunStart})
 	var stop error
-	for _, t := range targets {
+	for i, t := range targets {
 		if err := ctx.Err(); err != nil {
 			stop = err
 			break
 		}
+		b.folderIdx = i + 1
+		b.emit(ProgressEvent{Kind: ProgressFolderStart, Folder: t.folder.Name})
 		err := b.backupFolder(ctx, t)
 		if errors.Is(err, errFolderSkipped) {
 			b.warn("folder %q is no longer available on the server; skipped", t.folder.Name)
@@ -355,8 +405,10 @@ func (b *backup) backupFolder(ctx context.Context, t target) error {
 		b.condstore, b.opts.Full)
 
 	if mode == plan.ModeUnchanged {
-		b.rep.Folders = append(b.rep.Folders, FolderReport{Name: name, Mode: mode.String(), Messages: len(cur)})
+		fr := FolderReport{Name: name, Mode: mode.String(), Messages: len(cur)}
+		b.rep.Folders = append(b.rep.Folders, fr)
 		b.opts.Logf("%s: unchanged (%d messages)", name, len(cur))
+		b.emit(ProgressEvent{Kind: ProgressFolderDone, Folder: name, Report: &fr})
 		return nil
 	}
 
@@ -410,6 +462,7 @@ func (b *backup) backupFolder(ctx context.Context, t target) error {
 	b.rep.Closed += fr.Closed
 	b.rep.Reflagged += fr.Reflagged
 	b.opts.Logf("%s: %s, %d messages, +%d -%d ~%d", name, fr.Mode, fr.Messages, fr.New, fr.Closed, fr.Reflagged)
+	b.emit(ProgressEvent{Kind: ProgressFolderDone, Folder: name, Report: &fr})
 	return nil
 }
 
@@ -535,6 +588,8 @@ func (b *backup) fetchNew(ctx context.Context, name string, folderID int64, uidV
 		}
 	}
 	var fetch []uint32
+	var skipped []uint32
+	var dlBytes int64
 	for _, u := range uids {
 		info := infos[u]
 		if kb, ok := plan.MatchEmailID(info.EmailID, info.Size, byID); ok {
@@ -542,9 +597,15 @@ func (b *backup) fetchNew(ctx context.Context, name string, folderID int64, uidV
 			b.rep.SkippedByEmailID++
 			b.rep.BlobsReused++
 			b.opts.Logf("%s uid %d sha256 %x (EMAILID match, body not downloaded)", name, u, kb.SHA[:8])
+			skipped = append(skipped, u)
 			continue
 		}
 		fetch = append(fetch, u)
+		dlBytes += info.Size
+	}
+	b.emit(ProgressEvent{Kind: ProgressFolderFetch, Folder: name, Messages: len(uids), Bytes: dlBytes})
+	for range skipped {
+		b.emit(ProgressEvent{Kind: ProgressMessageDone, Folder: name})
 	}
 	if len(fetch) == 0 {
 		return p, nil
@@ -564,6 +625,7 @@ func (b *backup) fetchNew(ctx context.Context, name string, folderID int64, uidV
 		if err := b.storeBlob(name, uid, raw, sha, info, p); err != nil {
 			return err
 		}
+		b.emit(ProgressEvent{Kind: ProgressMessageDone, Folder: name, Bytes: int64(len(raw))})
 		if len(p.opens) >= commitEvery || p.bytes >= commitBytes<<20 {
 			return b.flush(folderID, uidValidity, p)
 		}
