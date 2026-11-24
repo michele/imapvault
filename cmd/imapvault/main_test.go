@@ -48,3 +48,22 @@ func TestAccountsEmptyAndListed(t *testing.T) {
 		}
 	}
 }
+
+func TestMissingAccountConfigNamesThePathOnce(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	want := filepath.Join(cfg, "imapvault", "fastmail.toml")
+	for _, cmd := range []string{"backup", "init"} { // online and offline loaders
+		_, err := execRoot(t, "--account", "fastmail", cmd)
+		if err == nil {
+			t.Fatalf("%s: want an error", cmd)
+		}
+		msg := err.Error()
+		if n := strings.Count(msg, want); n != 1 {
+			t.Errorf("%s: the path appears %d times, want once: %s", cmd, n, msg)
+		}
+		if !strings.Contains(msg, `account "fastmail"`) {
+			t.Errorf("%s: %s", cmd, msg)
+		}
+	}
+}

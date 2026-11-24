@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -166,9 +167,9 @@ func Load(path string) (*Config, error) { return LoadAccount(path, "") }
 // LoadAccount is Load for a named account: the password may come from
 // IMAPVAULT_IMAP_PASSWORD_<NAME>.
 func LoadAccount(path, account string) (*Config, error) {
-	data, err := os.ReadFile(path)
+	data, err := readConfigFile(path, account, realPasswordDeps())
 	if err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
+		return nil, err
 	}
 	cfg, err := ParseAccount(data, os.Getenv, account)
 	if err != nil {
@@ -182,15 +183,52 @@ func LoadAccount(path, account string) (*Config, error) {
 	return cfg, nil
 }
 
+// MissingConfigError is a config file that is not there. It says where the file
+// was expected and how to fix that, because the usual cause is a file in the
+// wrong folder (above all in a container, where the account's file must be at
+// <XDG_CONFIG_HOME>/imapvault/NAME.toml). It unwraps to fs.ErrNotExist.
+type MissingConfigError struct {
+	Path        string
+	Account     string
+	InContainer bool
+}
+
+func (e *MissingConfigError) Error() string {
+	if e.Account == "" {
+		return fmt.Sprintf("no config file at %s", e.Path)
+	}
+	msg := fmt.Sprintf("no config for account %q: expected %s. Create it there (see examples/), "+
+		"or set XDG_CONFIG_HOME to a folder that contains imapvault/%s.toml", e.Account, e.Path, e.Account)
+	if e.InContainer {
+		msg += fmt.Sprintf(". In a container, mount the folder that holds %s.toml at %s", e.Account, filepath.Dir(e.Path))
+	}
+	return msg
+}
+
+func (e *MissingConfigError) Unwrap() error { return fs.ErrNotExist }
+
+// readConfigFile reads a config file, turning "does not exist" into a
+// MissingConfigError.
+func readConfigFile(path, account string, d passwordDeps) ([]byte, error) {
+	data, err := d.readFile(path)
+	if err == nil {
+		return data, nil
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, &MissingConfigError{Path: path, Account: account, InContainer: inContainer(d.getenv, d.exists)}
+	}
+	return nil, fmt.Errorf("read config: %w", err)
+}
+
 // LoadOffline is Load for commands that never connect to IMAP: everything is
 // validated except that the password may be unset.
 func LoadOffline(path string) (*Config, error) { return LoadAccountOffline(path, "") }
 
 // LoadAccountOffline is LoadOffline for a named account.
 func LoadAccountOffline(path, account string) (*Config, error) {
-	data, err := os.ReadFile(path)
+	data, err := readConfigFile(path, account, realPasswordDeps())
 	if err != nil {
-		return nil, fmt.Errorf("read config: %w", err)
+		return nil, err
 	}
 	return parse(data, os.Getenv, account, false)
 }

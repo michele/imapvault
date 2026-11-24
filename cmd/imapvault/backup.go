@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,16 @@ import (
 	"github.com/michele/imapvault/internal/config"
 	"github.com/michele/imapvault/internal/engine"
 )
+
+// configError names the config file in a load error, unless the error already
+// does (a missing file says where it expected it and how to fix that).
+func configError(path string, err error) error {
+	var missing *config.MissingConfigError
+	if errors.As(err, &missing) {
+		return err
+	}
+	return fmt.Errorf("%s: %w", path, err)
+}
 
 // loadOnlineConfig is loadOfflineConfig plus the IMAP password: for commands that
 // connect to the server. Password warnings (a password file others can read) go
@@ -29,7 +40,7 @@ func loadOnlineConfig(opts *options) (*config.Config, error) {
 	}
 	cfg, err := config.LoadAccount(path, account)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, configError(path, err)
 	}
 	for _, w := range cfg.PasswordWarnings {
 		_, _ = fmt.Fprintln(opts.stderr, "warning:", w)

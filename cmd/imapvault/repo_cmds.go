@@ -25,7 +25,7 @@ func loadOfflineConfig(opts *options) (*config.Config, error) {
 	}
 	cfg, err := config.LoadAccountOffline(path, account)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, configError(path, err)
 	}
 	return cfg, nil
 }
