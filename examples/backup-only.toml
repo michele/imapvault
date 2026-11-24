@@ -16,6 +16,10 @@ exclude = ["Spam", "Junk"]
 
 [guard]
 on_alert = "/usr/local/bin/notify-me 'imapvault alert: {account} {summary}'"
+# Where no program can run (a container), POST the message to a URL instead. The URL of a topic works like a
+# password, so keep it in a file. https, or http only to a local address. `imapvault run` also uses it to say
+# when no backup has succeeded for a day.
+# on_alert_url_file = "/etc/imapvault/alert_url"
 
 # Decided at `imapvault init`; it cannot be added later. Make a key pair elsewhere with
 # `imapvault keygen --out personal.key`, and add a second, offline recovery key.

@@ -38,8 +38,10 @@ imapvault --account personal backup                          # the first run can
 imapvault --account personal snapshots
 ```
 
-Then run `backup` on a schedule (systemd timer, cron or a container: [docs/SCHEDULING.md](docs/SCHEDULING.md),
-[docs/DEPLOY.md](docs/DEPLOY.md)) and `forget` + `prune` weekly. A machine that only runs the schedule needs
+Then keep it running: `imapvault --account personal run` backs up every hour, applies the retention policy daily
+and prunes only if you ask (`--prune-every 7d`), and, if you configure a notification, tells you when the guard trips or
+backups keep failing ([docs/DEPLOY.md](docs/DEPLOY.md) has a Docker Compose file that starts it). Or schedule `backup` yourself
+(systemd timer, cron: [docs/SCHEDULING.md](docs/SCHEDULING.md)) and run `forget` + `prune` weekly. A machine that only runs the schedule needs
 the public keys only ([examples/backup-only.toml](examples/backup-only.toml)); keep the private key where you
 read or restore mail, and keep a second, offline recovery key. Exit code `3` means the guard saw a mass deletion.
 
@@ -55,6 +57,7 @@ imapvault keygen --out ~/.config/imapvault/personal.key   # age key pair; prints
 imapvault --account personal init              # create the repository at repository.path
 imapvault --account personal doctor            # server capabilities, folders, and what would be backed up
 imapvault --account personal backup            # read-only run -> a new snapshot (--full: list every folder in full)
+imapvault --account personal run               # keep running: backup every --every (1h), forget daily, prune only with --prune-every
 imapvault --account personal snapshots         # list snapshots (--all: forgotten ones too)
 imapvault --account personal ls latest         # folders in a snapshot ("latest" or a number)
 imapvault --account personal ls latest INBOX   # messages in a folder: UID, flags, size, date, sender, subject, hash

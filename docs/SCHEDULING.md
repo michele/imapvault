@@ -1,8 +1,13 @@
 # Running imapvault on a schedule
 
-imapvault is a one-shot command: `backup` makes one snapshot and exits. Run it from systemd timers or cron.
-(For a container, see [DEPLOY.md](DEPLOY.md): a compose file where the scheduled command is `docker compose run --rm -T backup`.) Run it hourly if you like: a folder the server reports as
-unchanged costs one `EXAMINE`.
+`imapvault backup` is a one-shot command: it makes one snapshot and exits. You can run it from systemd timers or
+cron (this page), or let `imapvault run` do the scheduling itself: it backs up every hour by default, applies the
+retention policy daily, prunes only if you pass `--prune-every`, retries failures with a back-off, and, if you
+configure a notification, tells you when the guard trips or no backup has worked for a day. It is what the Docker setup in
+[DEPLOY.md](DEPLOY.md) starts; it should run just as well under systemd (`ExecStart=imapvault --account NAME run`, with
+`Restart=on-failure`; not tried here). Use one or the other for an account, not both: they would take turns on the repository lock.
+
+With the one-shot command, run it hourly if you like: a folder the server reports as unchanged costs one `EXAMINE`.
 
 The repository lock makes overlap harmless. A second `backup` that starts while one is running exits at once
 with an error instead of waiting, so you do not need `flock(1)` around it.

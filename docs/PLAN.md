@@ -507,6 +507,34 @@ Engine and Compose v1 (Podman behind the Compose v2 CLI here), Synology Containe
 snippet, `-t` giving the bar in a container, arm64 hardware. *Reported by the maintainer, not recorded:* a real first backup (about 100,000 messages, 20 GiB, about 3 hours)
 finished on their NAS with the container steady near 360 MB, so the 1 GiB limit has room.
 
+**M11 `run` (done).** `imapvault run [--every 1h] [--forget-every 24h] [--prune-every 0] [--stale-after 24h]` is a scheduler in the tool:
+backup, then forget, then prune, one job at a time (`plan.NextJob`, pure and table-tested, picks the job; `engine.Run` sequences it with
+an injected clock). Each job takes the repository lock only while it runs, so a manual command works between jobs and fails at once
+during one; a lock held by someone else is "busy" (retried in 1 m, not a failure). A failed backup backs off 30 s, 1 m, 2 m, then 5 m.
+The config is read and the server dialled again for every backup. After a guard alert the loop **keeps going** (the alert is logged and
+notified, prune stays refused until `ack`, and a reminder is logged after each forget). Without exit codes to watch, one **stale**
+notification goes out per failure streak after `--stale-after`. SIGTERM stops a backup cleanly (partial snapshot) and `run` exits 0;
+a config or repository that does not open exits 1 at once. The floor for `--every` is 5 m (each run writes an index copy, and the guard
+compares per run, so a slow deletion spread over many short runs would stay under its limits); a hidden `--min-every` lowers it for
+tests and demos.
+*New config:* `[guard] on_alert_url` / `on_alert_url_file`: `engine.Notify` sends the alert (and the stale notice) through the command
+hook and a plain-text POST, trying both. https always; http only to loopback, private or link-local addresses and dot-less names; no
+redirects, 15 s timeout, and no error or log line contains the URL. `Backup` checks the URL source before touching the server. Needed
+because the image has no program for `on_alert` to run.
+*Compose:* `run` is now the default service (`docker compose up -d`); `backup` moved to the `tools` profile (`docker compose run --rm
+backup`). A change from v0.2.1, where `up` ran one backup. Intervals come from `.env`.
+*Findings:* the first draft of the stale message said "for 0s" (rounded to whole minutes); durations in the log now read 15s, 1m30s,
+1h05m. `docker compose down` ignores services in an unselected profile, so a stopped `up backup` container survived and pinned the dovecot
+container's network namespace; the deploy test now names the profile. My test override omitted the new `run` service, so the daemon
+ran on a bridge network and reported "connection refused": the failure log read well, which is the point of logging it.
+*Verified:* unit tests (schedule table, notifier with `httptest`, the loop with a fake clock over the in-memory mailbox), `make itest`, and
+`make deploy-itest` (`up -d`, first backup, forget, `stop` exits 0). Against dovecot by hand: a mass deletion between two cycles trips
+the guard, the local listener receives exactly one POST with the right title and body, the loop goes on and the next cycles are quiet,
+prune is refused with its reason; a config pointed at a closed port gives backoff, exactly one stale POST, and recovery when fixed
+(the config is re-read); a manual `prune --dry-run` during a job fails at once with the holder; SIGTERM in the middle of a 25,000-message
+folder exits 0 and the next start fetches only the remainder. *Not verified:* days of uptime, a real provider, ntfy.sh itself (nothing
+was sent to an external service), Docker Engine, Synology's view of a long-running project.
+
 ## Testing
 
 - Unit: `plan` (sync diff, guard, retention) as table tests. Blob store and index with temp dirs.
