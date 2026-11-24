@@ -7,15 +7,5 @@ x-test-net: &test-net
 services:
   run:
     <<: *test-net
-  backup:
-    <<: *test-net
-  init:
-    <<: *test-net
-  forget:
-    <<: *test-net
-  prune:
-    <<: *test-net
-  check:
-    <<: *test-net
   imapvault:
     <<: *test-net

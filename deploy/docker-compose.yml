@@ -1,30 +1,32 @@
-# imapvault in Docker: backups for ONE mailbox account.
+# imapvault in Docker: backups for ONE mailbox account. Two services:
 #
-# `docker compose up -d` starts the `run` service: one long-running container that backs up every
-# hour, applies the retention policy ("forget") daily, optionally prunes, and notifies you when the
-# mass-deletion guard trips or backups keep failing. Without it, imapvault is one-shot: `backup` makes
-# one snapshot and exits, and something on the host (cron, a systemd timer, Synology Task Scheduler)
-# has to start it. See docs/DEPLOY.md.
+#   run        always on. `docker compose up -d` starts it: it backs up every hour, applies the retention
+#              policy ("forget") daily, optionally prunes, and notifies you when the mass-deletion guard
+#              trips or backups keep failing.
+#   imapvault  the CLI, for everything else. `docker compose run --rm imapvault <command>`, with the
+#              account already set; the container exits when the command does.
+#
+# See docs/DEPLOY.md.
 #
 #   cp .env.example .env                          # set PUID/PGID (`id` on the NAS) and IMAPVAULT_ACCOUNT
 #   mkdir -p config repo secrets && chmod 700 repo
 #   cp imapvault.example.toml config/fastmail.toml   # edit it; the file name is the account name
 #   (write the IMAP app password to secrets/imap_password, see secrets/README.md)
-#   docker compose run --rm init                  # once; creates the repository
-#   docker compose run --rm backup                # the first run can take hours; the live bar shows progress
+#   docker compose run --rm imapvault init        # once; creates the repository
+#   docker compose run --rm imapvault backup      # the first run can take hours; the live bar shows progress
 #   docker compose up -d                          # then let imapvault schedule itself
 #   docker compose logs -f -t run                 # what it is doing
 #
-# More commands, each one the matching imapvault command, with any extra arguments appended:
-#   docker compose run --rm backup --full             docker compose run --rm prune --dry-run
-#   docker compose run --rm forget                    docker compose run --rm check
-#   docker compose run --rm imapvault --account fastmail snapshots     (any other command)
+# Other commands, the same way (any imapvault command and its flags):
+#   docker compose run --rm imapvault snapshots          docker compose run --rm imapvault prune --dry-run
+#   docker compose run --rm imapvault forget             docker compose run --rm imapvault check --read-data
+#   docker compose run --rm imapvault --account work snapshots      (another account: the last --account wins)
 #
 # The config folder is mounted at /config/imapvault because that is where `--account NAME` looks
 # (the image sets XDG_CONFIG_HOME=/config). On the host the file is simply ./config/NAME.toml.
 #
 # Build the image from this checkout instead of pulling it (and set IMAPVAULT_IMAGE=imapvault:local in .env):
-#   docker compose -f docker-compose.yml -f docker-compose.build.yml build backup
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml build run
 name: imapvault-deploy
 
 x-imapvault: &imapvault
@@ -44,7 +46,7 @@ x-imapvault: &imapvault
   secrets:
     - source: imap_password
       target: imap_password # -> /run/secrets/imap_password
-  # A run that fails is not retried by Docker; the next scheduled run resumes where it stopped.
+  # A command that fails is not retried by Docker. (`run` overrides this.)
   restart: "no"
   read_only: true
   # Scratch space in RAM; nothing imapvault keeps is written here.
@@ -53,7 +55,7 @@ x-imapvault: &imapvault
   cap_drop: [ALL]
   security_opt:
     - no-new-privileges:true
-  # SIGTERM stops a run cleanly: what was downloaded is kept and the next run continues from it.
+  # SIGTERM stops a backup cleanly: what was downloaded is kept and the next one continues from it.
   stop_grace_period: 60s
   mem_limit: 1g
   pids_limit: 128
@@ -63,11 +65,11 @@ x-imapvault: &imapvault
       max-size: "10m"
       max-file: "3"
 
-# `entrypoint` (not `command`) fixes the command, so anything you type after the service name is
-# appended to it instead of replacing it: `docker compose run --rm prune --dry-run`. (`run` is the one
-# exception: its `command` holds the flags from .env, and typing flags after it replaces them.)
+# `entrypoint` (not `command`) fixes what runs, so anything you type after the service name is appended to
+# it instead of replacing it. (`run` keeps its flags from .env in `command`, so typing flags after `run`
+# replaces them; it is not meant to be run by hand.)
 services:
-  # The default: what `docker compose up -d` starts. The intervals come from .env. A run that fails is
+  # The default: what `docker compose up -d` starts. The intervals come from .env. A backup that fails is
   # retried by imapvault itself; Docker only restarts the container if the process exits, which it does
   # at once when the config or repository cannot be opened (so a bad setup shows as a restart loop).
   run:
@@ -80,41 +82,14 @@ services:
       - --prune-every=${IMAPVAULT_PRUNE_EVERY:-0}
       - --stale-after=${IMAPVAULT_STALE_AFTER:-24h}
 
-  # The services below are only started when you name them (they are in the "tools" profile).
-  # One backup, then exit: for the first run, a manual run, or a scheduler on the host
-  # (`docker compose run --rm -T backup`; do not run it next to `run`, they would take turns).
-  backup:
-    <<: *imapvault
-    profiles: [tools]
-    entrypoint: ["/imapvault", "--account", "${IMAPVAULT_ACCOUNT:?set IMAPVAULT_ACCOUNT in .env}", "backup"]
-
-  init:
-    <<: *imapvault
-    profiles: [tools]
-    entrypoint: ["/imapvault", "--account", "${IMAPVAULT_ACCOUNT:?set IMAPVAULT_ACCOUNT in .env}", "init"]
-
-  forget:
-    <<: *imapvault
-    profiles: [tools]
-    entrypoint: ["/imapvault", "--account", "${IMAPVAULT_ACCOUNT:?set IMAPVAULT_ACCOUNT in .env}", "forget"]
-
-  # Removes data: look first with `docker compose run --rm prune --dry-run`.
-  prune:
-    <<: *imapvault
-    profiles: [tools]
-    entrypoint: ["/imapvault", "--account", "${IMAPVAULT_ACCOUNT:?set IMAPVAULT_ACCOUNT in .env}", "prune"]
-
-  # Reads every stored object back and verifies its hash. It needs no private key.
-  check:
-    <<: *imapvault
-    profiles: [tools]
-    entrypoint: ["/imapvault", "--account", "${IMAPVAULT_ACCOUNT:?set IMAPVAULT_ACCOUNT in .env}", "check", "--read-data"]
-
-  # Any other command; you give the whole command line, so name the account yourself.
+  # Every other command. It is in the "tools" profile, so `up` leaves it alone and it starts only when you
+  # name it. The account is preset; give another one after it (`--account work`) and that one wins.
+  # Between `run`'s jobs this works as usual; during one it fails at once, naming who holds the lock.
+  # Look before you prune: `docker compose run --rm imapvault prune --dry-run`.
   imapvault:
     <<: *imapvault
     profiles: [tools]
-    entrypoint: ["/imapvault"]
+    entrypoint: ["/imapvault", "--account", "${IMAPVAULT_ACCOUNT:?set IMAPVAULT_ACCOUNT in .env}"]
 
 secrets:
   imap_password:

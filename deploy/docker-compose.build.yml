@@ -1,9 +1,9 @@
 # Override: build the image from this checkout instead of pulling it.
-#   docker compose -f docker-compose.yml -f docker-compose.build.yml build backup
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml build run
 # Then set IMAPVAULT_IMAGE=imapvault:local in .env so every later command uses that image
 # (without this override, plain `docker compose` would pull ghcr.io instead).
 services:
-  backup:
+  run:
     image: imapvault:local # same tag as `make docker-build`
     build:
       context: ../

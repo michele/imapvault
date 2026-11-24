@@ -18,22 +18,23 @@ Files: [`Dockerfile`](../Dockerfile), [`deploy/docker-compose.yml`](../deploy/do
 - **One compose project per mailbox account** (or one block of services per account, see
   [Several accounts](#several-accounts)). Each has its own config file, its own repository folder and its own
   password secret.
-- **One service per command**, with the command fixed in `entrypoint` so that what you type after the service
-  name is *added* to it:
+- **Two services.** `run` is the daemon: `docker compose up -d` starts it. `imapvault` is the command line for
+  everything else, with the account already set: what you type after it is the imapvault command, and the
+  container exits when the command does.
 
   | Run | Does |
   |---|---|
-  | `docker compose run --rm init` | creates the repository (once) |
   | `docker compose up -d` | starts `run`: backup on an interval, forget daily, prune if you ask, notifications |
-  | `docker compose run --rm backup` | one backup, then exit: the first run, a manual one, or from a host scheduler |
-  | `docker compose run --rm forget` | applies the retention policy to snapshots |
-  | `docker compose run --rm prune` | removes data nothing keeps any more; look first with `prune --dry-run` |
-  | `docker compose run --rm check` | `check --read-data`: reads every object back and verifies its hash |
-  | `docker compose run --rm imapvault --account NAME snapshots` | any other command; you type all of it |
+  | `docker compose run --rm imapvault init` | creates the repository (once) |
+  | `docker compose run --rm imapvault backup` | one backup, then exit: the first run, a manual one, or from a host scheduler |
+  | `docker compose run --rm imapvault forget` | applies the retention policy to snapshots |
+  | `docker compose run --rm imapvault prune --dry-run` | shows what prune would remove; leave out `--dry-run` to do it |
+  | `docker compose run --rm imapvault check --read-data` | reads every object back and verifies its hash |
+  | `docker compose run --rm imapvault snapshots` | any other imapvault command works the same way |
+  | `docker compose run --rm imapvault --account work snapshots` | another account: a later `--account` wins over the preset one |
 
-  So `docker compose run --rm backup --full` and `docker compose run --rm prune --dry-run` work as you would
-  expect. Only `run` is started by `docker compose up`; the others are in the `tools` profile and start when
-  you name them. (`run` takes its flags from `.env`, so typing flags after it replaces them.)
+  Only `run` is started by `docker compose up`; `imapvault` is in the `tools` profile and starts when you name
+  it. (`run` takes its flags from `.env`, and is not meant to be started by hand.)
 - **The container has no key to your mail.** A backup host holds the *public* age keys (`recipients`) and never
   the private one. It can back up, forget, prune and verify; it cannot read the mail back. See
   [Reading and restoring](#reading-and-restoring).
@@ -63,7 +64,7 @@ Pick one.
 
    ```sh
    cd deploy
-   docker compose -f docker-compose.yml -f docker-compose.build.yml build backup   # tags imapvault:local
+   docker compose -f docker-compose.yml -f docker-compose.build.yml build run   # tags imapvault:local
    ```
 
    Or `make docker-build` from the checkout, and for another architecture
@@ -229,8 +230,8 @@ rather than solving it on a single NAS; option 1 is simpler.
 ## First run
 
 ```sh
-docker compose run --rm init
-docker compose run --rm backup
+docker compose run --rm imapvault init
+docker compose run --rm imapvault backup
 ```
 
 `init` binds the repository to the account's host and username and, if you set `recipients`, to encryption.
@@ -256,7 +257,7 @@ Bulk [3/9]: done, full, 4000 messages, +4000 -0 ~0 (780.8 KiB in 46s)
 ```
 
 The compose file does not set `--progress`, so each case gets the right one. Force the plain lines in a terminal
-with `docker compose run --rm backup --progress log`, or silence them with `--progress none`. A folder with
+with `docker compose run --rm imapvault backup --progress log`, or silence them with `--progress none`. A folder with
 nothing new prints nothing, so folder numbers skip. There is no account-wide total: the bar covers one folder at
 a time.
 
@@ -323,7 +324,7 @@ run: stopping
 Read it with `docker compose logs -f -t run` (the lines carry no timestamps of their own). A failed backup reads
 `run: backup failed: <error>; retrying in 30s`.
 
-**Manual commands still work.** Between jobs, `docker compose run --rm prune --dry-run`, `check` or `snapshots` run
+**Manual commands still work.** Between jobs, `docker compose run --rm imapvault prune --dry-run`, `check` or `snapshots` run
 as usual. During a job, they fail at once, naming who holds the lock:
 
 ```
@@ -378,26 +379,26 @@ local listener, not against ntfy.sh itself.)
 
 ### Or schedule it from the host
 
-If you would rather have cron or Task Scheduler decide, leave `run` alone and call the one-shot services. Do not do
+If you would rather have cron or Task Scheduler decide, leave `run` alone and call the `imapvault` service. Do not do
 both: they would take turns on the lock. Hourly `backup`, and weekly `forget` then `prune`, is a reasonable start
 (see [SCHEDULING.md](SCHEDULING.md)). A folder the server reports as unchanged costs one `EXAMINE`, so an hourly
 run with no new mail is cheap.
 
-**From a scheduler, run `docker compose run --rm -T <service>`.** `-T` says there is no terminal. Docker Compose
+**From a scheduler, run `docker compose run --rm -T imapvault <command>`.** `-T` says there is no terminal. Docker Compose
 v2 notices that by itself (a run with no terminal worked without it); compose v1 stops with "the input device is
-not a TTY" without `-T`, and it does no harm with v2. Use `run --rm`, not `up`, for these services: `docker compose
-down` ignores services in the `tools` profile, so a container left by `up backup` would stay behind.
+not a TTY" without `-T`, and it does no harm with v2. Use `run --rm`, which removes the container when the command ends (`docker compose
+down` ignores services in the `tools` profile, so a container left by `up imapvault` would stay behind).
 
 Cron on a Linux host:
 
 ```cron
-17 * * * *  cd /srv/imapvault && docker compose run --rm -T backup >>/var/log/imapvault.log 2>&1
-23 4 * * 0  cd /srv/imapvault && docker compose run --rm -T forget >>/var/log/imapvault.log 2>&1
-33 4 * * 0  cd /srv/imapvault && docker compose run --rm -T prune  >>/var/log/imapvault.log 2>&1
+17 * * * *  cd /srv/imapvault && docker compose run --rm -T imapvault backup >>/var/log/imapvault.log 2>&1
+23 4 * * 0  cd /srv/imapvault && docker compose run --rm -T imapvault forget >>/var/log/imapvault.log 2>&1
+33 4 * * 0  cd /srv/imapvault && docker compose run --rm -T imapvault prune >>/var/log/imapvault.log 2>&1
 ```
 
 **Synology:** Control Panel > Task Scheduler > Create > Scheduled Task > User-defined script, run as `root`, with
-the same `cd ... && docker compose run --rm -T backup` line (use the full path `/usr/local/bin/docker`
+the same `cd ... && docker compose run --rm -T imapvault backup` line (use the full path `/usr/local/bin/docker`
 if the task cannot find it). The task can email you when a run ends with a non-zero code.
 
 A slow run does not get doubled: the repository lock refuses a second one at once, and that run exits `1`:
@@ -410,7 +411,7 @@ While the first backup is still going, the hourly runs fail this way. That is ex
 
 ### Exit codes
 
-For the one-shot services (a scheduler on the host): the container's exit code is imapvault's, and
+For a command run through the `imapvault` service (a scheduler on the host): the container's exit code is imapvault's, and
 `docker compose run` passes it on. (`run` logs these events instead; it only ever exits `0` when stopped or `1` at
 start.)
 
@@ -426,7 +427,7 @@ A scheduler that mails on a non-zero exit therefore mails on `1`, `2` and `3`. T
 ```sh
 #!/bin/sh
 cd /srv/imapvault || exit 1
-docker compose run --rm -T backup
+docker compose run --rm -T imapvault backup
 rc=$?
 [ "$rc" -eq 3 ] && echo "imapvault: GUARD ALERT, check the mailbox before the next prune" >&2
 exit "$rc"
@@ -436,7 +437,7 @@ The alert text is sealed in an encrypted repository, so reading it (`alerts`) ne
 host does not have. Until you `ack` it, `prune` keeps what the alert pinned.
 
 **systemd** instead of cron: a `Type=oneshot` service with `WorkingDirectory=/srv/imapvault` and
-`ExecStart=/usr/bin/docker compose run --rm -T backup`, started by a timer with `OnCalendar=hourly` and
+`ExecStart=/usr/bin/docker compose run --rm -T imapvault backup`, started by a timer with `OnCalendar=hourly` and
 `Persistent=true`, behaves the same, and a non-zero exit shows as a failed unit. (Written from the systemd
 documentation, not run.)
 
@@ -519,9 +520,9 @@ secrets:
 ```
 
 with `path = "/repo/work"` in `config/work.toml`. Run `docker compose run --rm imapvault --account work init`
-once, then `docker compose up -d`. For a manual `backup` of `work`, copy the `backup` service the same way (the
-free-form `imapvault` service mounts the first account's secret, which is fine for `init`, which needs no
-password). Two accounts never share a repository: each one is bound to its host and username at `init`. (If you added an `alert_url` secret to the shared block, list it here too: a `secrets:` key on
+once, then `docker compose up -d`. For a manual `backup` of `work`, copy the `imapvault` service the same way, with its own `entrypoint`
+(`["/imapvault", "--account", "work"]`) and secret (the `imapvault` service mounts the first account's secret,
+which is fine for `init`, which needs no password). Two accounts never share a repository: each one is bound to its host and username at `init`. (If you added an `alert_url` secret to the shared block, list it here too: a `secrets:` key on
 a service replaces the shared list.)
 
 ## NAS notes
@@ -532,9 +533,9 @@ a service replaces the shared list.)
 - **PUID/PGID:** SSH in as the user who owns the folder and run `id`. On Synology the first user is often
   `uid=1026`, group `users` = `100`; check, do not assume. Put the values in `.env` and `chown` `repo/` and
   `secrets/imap_password` to them.
-- **Synology Container Manager:** run `init` over SSH first (`sudo docker compose run --rm init` in the folder),
+- **Synology Container Manager:** run `init` over SSH first (`sudo docker compose run --rm imapvault init` in the folder),
   and tick "Start the project once it is created" only after that: started without a repository, `run` exits and
-  the restart policy keeps retrying. The project then shows `run` as running; the tools services stay stopped.
+  the restart policy keeps retrying. The project then shows `run` as running; the `imapvault` service stays stopped.
 - **Portainer:** Stacks > Add stack, paste the compose file, set the `.env` values as stack environment
   variables. Relative paths like `./config` resolve inside Portainer's own data directory, so use absolute
   paths (`/volume1/docker/imapvault/config`) in a pasted stack.

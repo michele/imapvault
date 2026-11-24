@@ -488,12 +488,10 @@ bar, a folder's summary appears twice (the engine's log line and the renderer's)
 next run fetched exactly the remainder), and the image run detached with `podman logs`. *Not verified:* the bar in terminal emulators
 other than a pty, `-t` in a container, a multi-GB first run on a real server.
 
-**M10 Docker deployment (done).** `deploy/`: `docker-compose.yml` (one service per command; `backup` is what `up` runs, `init`, `forget`,
-`prune`, `check` and a free-form `imapvault` are in a `tools` profile), `docker-compose.build.yml`, `.env.example`, `imapvault.example.toml`,
+**M10 Docker deployment (done).** `deploy/`: `docker-compose.yml` (first built as one service per command; M11 reduced it to `run` and `imapvault`), `docker-compose.build.yml`, `.env.example`, `imapvault.example.toml`,
 `secrets/README.md`; `docs/DEPLOY.md` replaces `docs/DOCKER.md` and follows quietbox's guide. imapvault is one-shot, so scheduling stays on
 the host (cron, a systemd timer, Synology Task Scheduler); a `run` loop command is a separate, later task.
-*Decisions:* the command is fixed in `entrypoint`, not `command`, so `docker compose run --rm prune --dry-run` appends to it instead of
-replacing it; `--progress` is not set (auto gives the bar under `run` and plain lines under `up`, cron and `logs`); the host keeps
+*Decisions:* the command is fixed in `entrypoint`, not `command`, so extra arguments are appended to it instead of replacing it; `--progress` is not set (auto gives the bar under `run` and plain lines under `up`, cron and `logs`); the host keeps
 `config/NAME.toml` flat and compose mounts the folder at `/config/imapvault`, because `--account NAME` reads `$XDG_CONFIG_HOME/imapvault/NAME.toml`
 and the image sets `XDG_CONFIG_HOME=/config` (a file put in `/config` was the first thing that went wrong on the NAS). A missing account
 config now says where it expected the file and, in a container, what to mount. `[guard] on_alert` cannot work in the image (it runs a
@@ -521,10 +519,12 @@ tests and demos.
 hook and a plain-text POST, trying both. https always; http only to loopback, private or link-local addresses and dot-less names; no
 redirects, 15 s timeout, and no error or log line contains the URL. `Backup` checks the URL source before touching the server. Needed
 because the image has no program for `on_alert` to run.
-*Compose:* `run` is now the default service (`docker compose up -d`); `backup` moved to the `tools` profile (`docker compose run --rm
-backup`). A change from v0.2.1, where `up` ran one backup. Intervals come from `.env`.
+*Compose:* two services. `run` is the default and always on (`docker compose up -d`, intervals from `.env`). `imapvault` (profile `tools`) is
+the CLI for everything else, with `--account` preset in its `entrypoint`, so the command is just `docker compose run --rm imapvault prune
+--dry-run`; a later `--account` wins, which keeps a second account reachable. It replaced the v0.2.1 services `backup`, `init`, `forget`,
+`prune` and `check` (five definitions to keep in step), and `up` no longer runs one backup but starts the daemon. Intervals come from `.env`.
 *Findings:* the first draft of the stale message said "for 0s" (rounded to whole minutes); durations in the log now read 15s, 1m30s,
-1h05m. `docker compose down` ignores services in an unselected profile, so a stopped `up backup` container survived and pinned the dovecot
+1h05m. `docker compose down` ignores services in an unselected profile, so a stopped `up` tools container survived and pinned the dovecot
 container's network namespace; the deploy test now names the profile. My test override omitted the new `run` service, so the daemon
 ran on a bridge network and reported "connection refused": the failure log read well, which is the point of logging it.
 *Verified:* unit tests (schedule table, notifier with `httptest`, the loop with a fake clock over the in-memory mailbox), `make itest`, and

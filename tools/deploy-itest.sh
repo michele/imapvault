@@ -8,8 +8,8 @@ COMPOSE=${COMPOSE:-docker compose}
 SRC=$(cd "$(dirname "$0")/../deploy" && pwd)
 T=$(mktemp -d)
 dc() { (cd "$T" && $COMPOSE "$@"); }
-# `down` only touches services in enabled profiles, so name the tools profile or a stopped `up backup`
-# container would survive and keep the dovecot container from being removed.
+# `down` only touches services in enabled profiles, so name the tools profile or a stopped tools container
+# would survive and keep the dovecot container from being removed.
 cleanup() { (cd "$T" && COMPOSE_PROFILES=tools $COMPOSE down -v >/dev/null 2>&1) || true; rm -rf "$T"; }
 trap cleanup EXIT
 
@@ -52,14 +52,15 @@ printf 'test\n' >"$T/secrets/imap_password"
 chmod 600 "$T/secrets/imap_password"
 
 run dc config -q;                                   expect 0 "" "compose config validates"
-run dc run --rm -T init;                            expect 0 "format " "init creates the repository"
-run dc up --exit-code-from backup backup;           expect 0 "Snapshot 1:" "up backup runs one backup and exits 0"
-run dc up --exit-code-from backup backup;           expect 0 "0 body(ies) downloaded" "a second backup reads nothing"
-run dc run --rm -T backup --progress log;           expect 0 "Snapshot 3:" "extra arguments are appended to backup"
-run dc run --rm -T prune --dry-run;                 expect 0 "" "prune --dry-run"
-run dc run --rm -T check;                           expect 0 "" "check --read-data"
-run dc run --rm -T imapvault --account it snapshots; expect 0 "" "free-form command"
+run dc run --rm -T imapvault init;                  expect 0 "format " "init creates the repository"
+run dc run --rm -T imapvault backup;                expect 0 "Snapshot 1:" "imapvault backup runs one backup and exits 0"
+run dc run --rm -T imapvault backup;                expect 0 "0 body(ies) downloaded" "a second backup reads nothing"
+run dc run --rm -T imapvault backup --progress log; expect 0 "Snapshot 3:" "extra arguments are appended after the account"
+run dc run --rm -T imapvault prune --dry-run;       expect 0 "" "prune --dry-run"
+run dc run --rm -T imapvault check --read-data;     expect 0 "" "check --read-data"
+run dc run --rm -T imapvault snapshots;             expect 0 "" "snapshots"
 echo "$out" | grep -q "^1 " || fail "snapshots does not list snapshot 1"
+run dc run --rm -T imapvault --account elsewhere snapshots; expect nonzero 'account "elsewhere"' "a later --account wins over the preset one"
 
 # The default service: a long-running container that schedules itself.
 wait_log() { # wait_log SERVICE PATTERN SECONDS
@@ -79,7 +80,7 @@ run dc up -d;                                       expect 0 "" "up -d starts th
 wait_log run "run: backup done" 60;                 echo "ok   run makes its first backup"
 wait_log run "run: forget: kept" 30;                echo "ok   run applies the retention policy after it"
 run dc ps;                                          expect 0 "run" "the run service is up"
-echo "$out" | grep -q "init" && fail "up -d started a tools service"
+echo "$out" | grep -q "imapvault-deploy-imapvault" && fail "up -d started the imapvault tools service"
 run dc stop run;                                    expect 0 "" "stop run"
 code=$($engine inspect -f '{{.State.ExitCode}}' imapvault-deploy-run-1 2>&1) || fail "inspect: $code"
 [ "$code" = 0 ] || fail "run exited $code on SIGTERM, want 0"
@@ -88,11 +89,11 @@ run dc logs run;                                    expect 0 "run: stopping" "ru
 
 # What a user sees when something is wrong: the exit code must reach the caller.
 printf 'wrong\n' >"$T/secrets/imap_password"
-run dc run --rm -T backup;                          expect 1 "" "a wrong password exits 1"
+run dc run --rm -T imapvault backup;                expect 1 "" "a wrong password exits 1"
 printf 'test\n' >"$T/secrets/imap_password"
 
 mv "$T/config/it.toml" "$T/config/elsewhere.toml"
-run dc run --rm -T backup;                          expect 1 "/config/imapvault/it.toml" "a misplaced config says where to put it"
+run dc run --rm -T imapvault backup;                expect 1 "/config/imapvault/it.toml" "a misplaced config says where to put it"
 echo "$out" | grep -q "mount" || fail "the container hint is missing"
 mv "$T/config/elsewhere.toml" "$T/config/it.toml"
 
