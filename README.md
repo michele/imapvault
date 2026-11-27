@@ -84,6 +84,7 @@ imapvault --account personal doctor            # server capabilities, folders, a
 imapvault --account personal backup            # read-only run -> a new snapshot (--full: list every folder in full)
 imapvault --account personal run               # keep running: backup every --every (1h), forget daily, prune only with --prune-every
 imapvault --account personal snapshots         # list snapshots (--all: forgotten ones too)
+imapvault --account personal stats             # size, growth, backup health, what prune would free (no key needed)
 imapvault --account personal ls latest         # folders in a snapshot ("latest" or a number)
 imapvault --account personal ls latest INBOX   # messages in a folder: UID, flags, size, date, sender, subject, hash
 imapvault --account personal show 3f9a1c2b     # one message by hash prefix; --raw writes the original .eml to stdout
@@ -133,6 +134,15 @@ nothing, so an hourly run with no new mail stays quiet. Folder numbers skip such
 stderr into stdout still gets valid JSON. There is no account-wide total: the server cannot say how many bytes a
 whole mailbox holds without reading every folder first, so the bar covers one folder at a time. `-v` adds a line per
 message (folder, UID, hash prefix; never subjects or bodies) and works with the bar.
+
+**Stats.** `imapvault --account personal stats` summarises the repository: unique messages against the places they
+occupy (the de-duplication ratio), raw and on-disk size, growth over the last 7 and 30 days, how the backup runs are
+doing (complete, partial and failed, the last good one, the longest gap, a typical run), how much is kept only because
+it is history, what `prune` would free right now (with the same pins, grace period and open-alert rules), guard alerts,
+and per-folder counts. It reads plaintext columns and the object files, so an encrypted repository needs no private key;
+folder names are sealed and show as `#id` unless you pass `--names` with the key configured. It never prints a subject
+or a sender. `--json` prints the same data and `--no-disk` skips measuring the object files, the only slow part. Like the
+other read commands it fails at once while a backup holds the repository lock.
 
 **Running continuously.** `imapvault --account personal run` stays up and does the scheduling: `--every` (default `1h`,
 at least `5m`) between backups, counted from the start of the previous one; `--forget-every` (default `24h`) applies the

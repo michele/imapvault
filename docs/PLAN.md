@@ -292,6 +292,7 @@ Restore is the only command that writes to a server, and the server is the sourc
 | `backup [--full]` | one backup run → snapshot. Exit 2 if it stopped partway (snapshot marked partial). `--full` lists every folder in full |
 | `run [--every 1h] [--forget-every 24h] [--prune-every 0] [--stale-after 24h]` | keep running: backup, forget and (opt-in) prune on an interval, one job at a time; keeps going after a guard alert; exits 0 when stopped |
 | `snapshots [--all]` | list snapshots (id, time, counts, pinned/flagged); `--all` includes forgotten ones |
+| `stats [--names] [--no-disk]` | repository insights: size and de-duplication, growth, backup-run health, kept-only-by-history, what prune would free, alerts, per folder. Plaintext columns only (no key); `--names` opens folder names with the key |
 | `ls <snapshot> [folder]` | folders, or messages in a folder (date, from, size, hash). No bodies |
 | `show <hash>` | headers of one message. `--raw` writes the .eml to stdout |
 | `diff <a> <b>` | added / deleted / moved / re-flagged / renumbered counts per folder; `latest~N` accepted; no private key needed (folders show as `#id` without one) |
@@ -552,6 +553,17 @@ that run. Both pages render at 1100 px and at a true 390 px with no horizontal o
 milestone labels such as "(M3)"; they are gone. *Not verified:* Cloudflare Pages serving `/guide/` and `/style.css` from the domain root, Gmail beyond what the
 maintainer reports, and Microsoft's current IMAP policy (the page gives OAuth2 as the reason, not a date). *Possible follow-up:* a clear error when
 someone points imapvault at an Outlook host, instead of a bare login failure.
+
+**M13 `stats` (done).** `imapvault stats`: read-only insights from plaintext index columns, the `runs` table and the object files. Queries are in
+`internal/index/stats.go`, the report in `engine.Stats`, the table in `cmd/imapvault/stats.go`. "What prune would free" uses the same pure
+`plan.Prune` as `prune` through a shared `planPrune`, so the two cannot disagree; unlike `prune --dry-run` it does not refuse while an alert is open (it
+reports that prune would be blocked). No sealed value is read unless `--names` is given (rule 8); no subject or sender is ever shown (rule 6). No format
+change. *Findings:* "x smaller" was nonsense for tiny encrypted messages (age overhead makes them larger on disk), so it says "larger" then; a per-day rate
+dividing by 30 understated a young repository, so it divides by the days the repository has existed (at most 30). *Verified:* engine tests with real backups
+and a fake clock (de-duplication, unread and starred, run health with a partial and a failed run, growth windows, history and prune across the grace
+boundary and with a pin, an open alert blocking prune, encrypted names with and without the key, an empty repository); the command against dovecot on an
+encrypted repository after a mass deletion, with and without `--names`. *Not verified:* numbers on a real 100,000-message repository and the disk walk on
+a network filesystem (see the timing recorded below if it was measured).
 
 ## Testing
 

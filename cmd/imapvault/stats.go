@@ -54,6 +54,13 @@ files, the only slow part on a large repository. --json prints the same data.`,
 	return cmd
 }
 
+// windowDays is how many days the 30-day growth figure really spans: a young
+// repository has not had 30 days, and dividing by 30 would understate the rate.
+func windowDays(now, oldest time.Time) int {
+	d := int(now.Sub(oldest).Hours()/24) + 1
+	return min(30, max(1, d))
+}
+
 // msgs writes "1 message" or "1,204 messages".
 func msgs(n int) string {
 	if n == 1 {
@@ -91,7 +98,11 @@ func printStats(out io.Writer, r *engine.StatsReport, now time.Time) {
 	m := r.Messages
 	line := fmt.Sprintf("%s unique, %s positions (%.2fx), %s raw", commas(m.Unique), commas(m.Positions), m.Dedupe, humanBytes(m.RawBytes))
 	if m.DiskBytes > 0 {
-		line += fmt.Sprintf(", %s on disk (%.1fx smaller)", humanBytes(m.DiskBytes), m.Compression)
+		if m.Compression >= 1 {
+			line += fmt.Sprintf(", %s on disk (%.1fx smaller)", humanBytes(m.DiskBytes), m.Compression)
+		} else { // small messages cost more than they save once sealed
+			line += fmt.Sprintf(", %s on disk (%.1fx larger)", humanBytes(m.DiskBytes), 1/m.Compression)
+		}
 	}
 	row("Messages", "%s", line)
 	if m.Positions > 0 {
@@ -99,7 +110,7 @@ func printStats(out io.Writer, r *engine.StatsReport, now time.Time) {
 	}
 	g := r.Growth
 	row("Growth", "+%s and +%s messages in the last 30 days (+%d/day); last 7 days +%s",
-		humanBytes(g.Last30Days.RawBytes), commas(g.Last30Days.Messages), g.Last30Days.Messages/30, humanBytes(g.Last7Days.RawBytes))
+		humanBytes(g.Last30Days.RawBytes), commas(g.Last30Days.Messages), g.Last30Days.Messages/windowDays(now, s.Oldest), humanBytes(g.Last7Days.RawBytes))
 	b := r.Backups
 	row("Backups", "%d runs: %d complete, %d partial, %d failed; last good %s; longest gap %s; typical run %s",
 		b.Runs, b.Complete, b.Partial, b.Failed, ago(now, b.LastGood), formatDuration(time.Duration(b.LongestGapSeconds)*time.Second), formatDuration(time.Duration(b.TypicalRunSeconds)*time.Second))

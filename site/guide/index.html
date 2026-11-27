@@ -155,8 +155,9 @@ Snapshot 1: 13 messages in 7 folders
   <section id="look">
     <h2>8. Look around</h2>
     <p>Every backup is a <strong>snapshot</strong>: a cheap index of what was where, with flags. Reading names and headers needs your private key, so run these where <code>identity_file</code> is set.</p>
-<pre><code><span class="c"># your snapshots</span>
+<pre><code><span class="c"># your snapshots, and a summary: size, growth, how the backups are doing</span>
 imapvault --account personal snapshots
+imapvault --account personal stats
 
 <span class="c"># the folders in the newest one, then the messages in one folder</span>
 imapvault --account personal ls latest

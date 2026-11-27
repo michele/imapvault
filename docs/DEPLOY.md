@@ -450,6 +450,12 @@ only ever appends (see the README). `snapshots`, `check` and `check --read-data`
 
 ## Day-2
 
+### Stats
+
+`docker compose run --rm imapvault stats` shows what the repository holds and how the backups are doing: size, growth,
+the last good run, the longest gap, what prune would free. It needs no private key. It fails at once while a backup
+holds the lock, so between `run`'s jobs is the time to ask.
+
 ### Logs
 
 `docker compose logs -f -t run` follows the daemon (its own lines, plus the per-folder progress lines of each

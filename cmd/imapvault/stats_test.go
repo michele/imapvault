@@ -90,3 +90,19 @@ func TestStatsOnAnEmptyRepositoryIsFriendly(t *testing.T) {
 		t.Fatalf("%v %q", err, out)
 	}
 }
+
+func TestPrintStatsSaysLargerWhenSealingCostsMoreThanItSaves(t *testing.T) {
+	now := time.Now()
+	var out bytes.Buffer
+	printStats(&out, &engine.StatsReport{
+		Snapshots: engine.StatsSnapshots{Total: 1, Newest: now, Oldest: now},
+		Messages:  engine.StatsMessages{Unique: 2, Positions: 2, RawBytes: 400, DiskBytes: 1000, Compression: 0.4},
+		Growth:    engine.StatsGrowth{Last30Days: engine.StatsWindow{Messages: 90}},
+	}, now)
+	if !strings.Contains(out.String(), "2.5x larger") || strings.Contains(out.String(), "smaller") {
+		t.Errorf("size wording:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "(+90/day)") { // a one-day-old repository: 90 messages in 1 day, not 3 a day
+		t.Errorf("rate of a young repository:\n%s", out.String())
+	}
+}
