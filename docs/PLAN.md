@@ -562,8 +562,8 @@ change. *Findings:* "x smaller" was nonsense for tiny encrypted messages (age ov
 dividing by 30 understated a young repository, so it divides by the days the repository has existed (at most 30). *Verified:* engine tests with real backups
 and a fake clock (de-duplication, unread and starred, run health with a partial and a failed run, growth windows, history and prune across the grace
 boundary and with a pin, an open alert blocking prune, encrypted names with and without the key, an empty repository); the command against dovecot on an
-encrypted repository after a mass deletion, with and without `--names`. *Not verified:* numbers on a real 100,000-message repository and the disk walk on
-a network filesystem (see the timing recorded below if it was measured).
+encrypted repository after a mass deletion, with and without `--names`. *Timing (macOS host, encrypted repository, local disk):* 50,110 messages and 50,110 object files: 1.4 s with the disk walk, 0.8 s with `--no-disk`.
+*Not verified:* numbers on a real 100,000-message repository, and the disk walk on a network filesystem.
 
 ## Testing
 

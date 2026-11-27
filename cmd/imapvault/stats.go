@@ -109,8 +109,8 @@ func printStats(out io.Writer, r *engine.StatsReport, now time.Time) {
 		row("Unread", "%d%% of current mail; %s starred", m.Unread*100/m.Positions, commas(m.Starred))
 	}
 	g := r.Growth
-	row("Growth", "+%s and +%s messages in the last 30 days (+%d/day); last 7 days +%s",
-		humanBytes(g.Last30Days.RawBytes), commas(g.Last30Days.Messages), g.Last30Days.Messages/windowDays(now, s.Oldest), humanBytes(g.Last7Days.RawBytes))
+	row("Growth", "+%s and +%s messages in the last 30 days (+%s/day); last 7 days +%s",
+		humanBytes(g.Last30Days.RawBytes), commas(g.Last30Days.Messages), commas(g.Last30Days.Messages/windowDays(now, s.Oldest)), humanBytes(g.Last7Days.RawBytes))
 	b := r.Backups
 	row("Backups", "%d runs: %d complete, %d partial, %d failed; last good %s; longest gap %s; typical run %s",
 		b.Runs, b.Complete, b.Partial, b.Failed, ago(now, b.LastGood), formatDuration(time.Duration(b.LongestGapSeconds)*time.Second), formatDuration(time.Duration(b.TypicalRunSeconds)*time.Second))
