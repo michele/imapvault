@@ -102,6 +102,32 @@ func (e *unackedAlertsError) Error() string {
 
 func (e *unackedAlertsError) Is(target error) bool { return target == ErrUnackedAlerts }
 
+// planPrune works out what prune would remove at the given cutoff: the pure
+// plan.Prune over the index's snapshots, closed entries and blob references. It
+// reads only; Prune and Stats both use it so they can never disagree.
+func planPrune(db *index.DB, cutoff time.Time) (plan.PruneResult, error) {
+	snaps, err := db.Snapshots()
+	if err != nil {
+		return plan.PruneResult{}, err
+	}
+	closed, err := db.ClosedEntries()
+	if err != nil {
+		return plan.PruneResult{}, err
+	}
+	refs, unreferenced, err := db.BlobRefs()
+	if err != nil {
+		return plan.PruneResult{}, err
+	}
+	in := plan.PruneInput{Cutoff: cutoff, Refs: refs, Unreferenced: unreferenced}
+	for _, sn := range snaps {
+		in.Snapshots = append(in.Snapshots, plan.PruneSnapshot{ID: sn.ID, Forgotten: sn.Forgotten, Pinned: sn.Pinned})
+	}
+	for _, e := range closed {
+		in.Entries = append(in.Entries, plan.PruneEntry{ID: e.ID, Blob: e.Blob, From: e.From, To: e.To, ClosedAt: e.ClosedAt})
+	}
+	return plan.Prune(in), nil
+}
+
 // PruneReport is what prune removed (or, with DryRun, would remove).
 type PruneReport struct {
 	DryRun bool `json:"dry_run"`
@@ -150,26 +176,10 @@ func Prune(_ context.Context, cfg *config.Config, opts RetentionOptions) (*Prune
 	now := opts.Now()
 	rep := &PruneReport{DryRun: opts.DryRun, Cutoff: now.Add(-cfg.Retention.DeletedGraceDur).UTC()}
 
-	snaps, err := w.db.Snapshots()
+	pr, err := planPrune(w.db, rep.Cutoff)
 	if err != nil {
 		return nil, err
 	}
-	closed, err := w.db.ClosedEntries()
-	if err != nil {
-		return nil, err
-	}
-	refs, unreferenced, err := w.db.BlobRefs()
-	if err != nil {
-		return nil, err
-	}
-	in := plan.PruneInput{Cutoff: rep.Cutoff, Refs: refs, Unreferenced: unreferenced}
-	for _, s := range snaps {
-		in.Snapshots = append(in.Snapshots, plan.PruneSnapshot{ID: s.ID, Forgotten: s.Forgotten, Pinned: s.Pinned})
-	}
-	for _, e := range closed {
-		in.Entries = append(in.Entries, plan.PruneEntry{ID: e.ID, Blob: e.Blob, From: e.From, To: e.To, ClosedAt: e.ClosedAt})
-	}
-	pr := plan.Prune(in)
 
 	store, err := openStore(w.r, "") // no identity: prune never reads a message
 	if err != nil {
